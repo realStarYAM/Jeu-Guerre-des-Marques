@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guerre des Marques</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Rajdhani', sans-serif; }
+        .title-font { font-family: 'Orbitron', sans-serif; }
+        
+        /* Animations */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); }
+            50% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.8); }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+        @keyframes attack-right {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(50px); }
+        }
+        @keyframes attack-left {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(-50px); }
+        }
+        @keyframes damage {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(2) hue-rotate(180deg); }
+        }
+        @keyframes victory {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        .pulse-glow { animation: pulse-glow 2s infinite; }
+        .shake { animation: shake 0.5s; }
+        .attack-right { animation: attack-right 0.5s; }
+        .attack-left { animation: attack-left 0.5s; }
+        .damage { animation: damage 0.3s; }
+        .victory { animation: victory 0.5s infinite; }
+        
+        /* Barres de vie */
+        .health-bar {
+            background: linear-gradient(90deg, #22c55e, #84cc16);
+            transition: width 0.5s ease-out;
+        }
+        .health-bar-low {
+            background: linear-gradient(90deg, #ef4444, #f97316);
+        }
+        
+        /* Cards hover effect */
+        .brand-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .brand-card { transition: all 0.3s ease; }
+        
+        /* Background pattern */
+        .bg-pattern {
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(168, 85, 247, 0.1) 0%, transparent 50%);
+        }
+        
+        /* Hide screens by default */
+        .screen { display: none; }
+        .screen.active { display: flex; }
+    </style>
+</head>
+<body class="min-h-screen bg-gray-900 bg-pattern text-white overflow-x-hidden">
+    
+    <!-- ÉCRAN MENU PRINCIPAL -->
+    <div id="menu-screen" class="screen active flex-col items-center justify-center min-h-screen p-4">
+        <div class="text-center mb-12">
+            <h1 class="title-font text-5xl md:text-7xl font-black bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent mb-4">
+                GUERRE DES MARQUES
+            </h1>
+            <p class="text-xl text-gray-400">Choisissez votre marque. Dominez l'arène.</p>
+        </div>
+        
+        <div class="flex flex-col gap-4 w-full max-w-md">
+            <button onclick="showScreen('brand-select')" class="pulse-glow bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-2xl font-bold py-4 px-8 rounded-xl transition-all">
+                ⚔️ JOUER
+            </button>
+            <button onclick="showScreen('instructions')" class="bg-gray-800 hover:bg-gray-700 text-white text-xl font-bold py-3 px-8 rounded-xl border border-gray-600 transition-all">
+                📖 INSTRUCTIONS
+            </button>
+            <button onclick="showScreen('scores')" class="bg-gray-800 hover:bg-gray-700 text-white text-xl font-bold py-3 px-8 rounded-xl border border-gray-600 transition-all">
+                🏆 SCORES
+            </button>
+            <button onclick="resetProgress()" class="bg-red-900/50 hover:bg-red-800 text-red-300 text-lg font-bold py-2 px-8 rounded-xl border border-red-700 transition-all mt-4">
+                🔄 Réinitialiser la progression
+            </button>
+        </div>
+    </div>
+
+    <!-- ÉCRAN INSTRUCTIONS -->
+    <div id="instructions" class="screen flex-col items-center justify-center min-h-screen p-4">
+        <div class="bg-gray-800/80 backdrop-blur rounded-2xl p-8 max-w-2xl border border-gray-700">
+            <h2 class="title-font text-4xl font-bold text-center mb-6 text-blue-400">📖 INSTRUCTIONS</h2>
+            
+            <div class="space-y-4 text-gray-300">
+                <div class="bg-gray-700/50 p-4 rounded-xl">
+                    <h3 class="text-xl font-bold text-yellow-400 mb-2">🎯 Objectif</h3>
+                    <p>Choisissez une marque et affrontez des adversaires pour gagner de l'XP et devenir le champion ultime!</p>
+                </div>
+                
+                <div class="bg-gray-700/50 p-4 rounded-xl">
+                    <h3 class="text-xl font-bold text-green-400 mb-2">⚔️ Combat</h3>
+                    <p>Les combats sont basés sur vos stats (Force, Défense, Vitesse) + un facteur aléatoire. Utilisez vos compétences spéciales!</p>
+                </div>
+                
+                <div class="bg-gray-700/50 p-4 rounded-xl">
+                    <h3 class="text-xl font-bold text-purple-400 mb-2">📈 Progression</h3>
+                    <p>Gagnez de l'XP pour améliorer vos caractéristiques. Débloquez de nouvelles arènes plus difficiles avec de meilleures récompenses!</p>
+                </div>
+                
+                <div class="bg-gray-700/50 p-4 rounded-xl">
+                    <h3 class="text-xl font-bold text-blue-400 mb-2">🏟️ Arènes</h3>
+                    <p><span class="text-green-400">Bronze</span> → <span class="text-blue-400">Argent</span> → <span class="text-yellow-400">Or</span> → <span class="text-purple-400">Platine</span> → <span class="text-red-400">Diamant</span></p>
+                </div>
+            </div>
+            
+            <button onclick="showScreen('menu-screen')" class="w-full mt-6 bg-blue-600 hover:bg-blue-500 text-white text-xl font-bold py-3 px-8 rounded-xl transition-all">
+                ← Retour au menu
+            </button>
+        </div>
+    </div>
+
+    <!-- ÉCRAN SCORES -->
+    <div id="scores" class="screen flex-col items-center justify-center min-h-screen p-4">
+        <div class="bg-gray-800/80 backdrop-blur rounded-2xl p-8 max-w-2xl w-full border border-gray-700">
+            <h2 class="title-font text-4xl font-bold text-center mb-6 text-yellow-400">🏆 MEILLEURS SCORES</h2>
+            
+            <div id="scores-list" class="space-y-3">
+                <!-- Scores will be inserted here -->
+            </div>
+            
+            <button onclick="showScreen('menu-screen')" class="w-full mt-6 bg-blue-600 hover:bg-blue-500 text-white text-xl font-bold py-3 px-8 rounded-xl transition-all">
+                ← Retour au menu
+            </button>
+        </div>
+    </div>
+
+    <!-- ÉCRAN SÉLECTION DE MARQUE -->
+    <div id="brand-select" class="screen flex-col items-center min-h-screen p-4 py-8">
+        <h2 class="title-font text-4xl font-bold text-center mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            CHOISISSEZ VOTRE MARQUE
+        </h2>
+        <p class="text-gray-400 mb-8">Chaque marque a ses propres forces et faiblesses</p>
+        
+        <div id="brands-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 max-w-7xl">
+            <!-- Brands will be inserted here -->
+        </div>
+        
+        <button onclick="showScreen('menu-screen')" class="mt-8 bg-gray-700 hover:bg-gray-600 text-white text-lg font-bold py-2 px-6 rounded-xl transition-all">
+            ← Retour au menu
+        </button>
+    </div>
+
+    <!-- ÉCRAN PRINCIPAL DE JEU -->
+    <div id="game-screen" class="screen flex-col min-h-screen">
+        <!-- Header avec stats du joueur -->
+        <div class="bg-gray-800/90 backdrop-blur border-b border-gray-700 p-4">
+            <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div id="player-brand-icon" class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-2xl"></div>
+                    <div>
+                        <h3 id="player-brand-name" class="text-xl font-bold"></h3>
+                        <p id="player-level" class="text-sm text-gray-400"></p>
+                    </div>
+                </div>
+                
+                <!-- Barre XP -->
+                <div class="flex-1 max-w-md">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-purple-400">XP</span>
+                        <span id="xp-text" class="text-gray-400"></span>
+                    </div>
+                    <div class="h-4 bg-gray-700 rounded-full overflow-hidden">
+                        <div id="xp-bar" class="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-500"></div>
+                    </div>
+                </div>
+                
+                <!-- Arène actuelle -->
+                <div id="arena-badge" class="px-4 py-2 rounded-xl font-bold"></div>
+                
+                <button onclick="showScreen('menu-screen')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm">
+                    Menu
+                </button>
+            </div>
+        </div>
+
+        <!-- Zone de jeu principale -->
+        <div class="flex-1 flex flex-col lg:flex-row gap-4 p-4 max-w-7xl mx-auto w-full">
+            <!-- Panel Stats & Améliorations -->
+            <div class="lg:w-80 space-y-4">
+                <!-- Stats du joueur -->
+                <div class="bg-gray-800/80 backdrop-blur rounded-xl p-4 border border-gray-700">
+                    <h3 class="text-lg font-bold mb-4 text-blue-400">📊 Statistiques</h3>
+                    <div id="player-stats" class="space-y-3">
+                        <!-- Stats will be inserted here -->
+                    </div>
+                </div>
+                
+                <!-- Améliorations -->
+                <div class="bg-gray-800/80 backdrop-blur rounded-xl p-4 border border-gray-700">
+                    <h3 class="text-lg font-bold mb-4 text-green-400">⬆️ Améliorations</h3>
+                    <p class="text-sm text-gray-400 mb-3">Points disponibles: <span id="upgrade-points" class="text-yellow-400 font-bold">0</span></p>
+                    <div id="upgrades-list" class="space-y-2">
+                        <!-- Upgrades will be inserted here -->
+                    </div>
+                </div>
+                
+                <!-- Compétence spéciale -->
+                <div class="bg-gray-800/80 backdrop-blur rounded-xl p-4 border border-gray-700">
+                    <h3 class="text-lg font-bold mb-2 text-yellow-400">⚡ Compétence Spéciale</h3>
+                    <div id="special-ability" class="text-sm text-gray-300"></div>
+                    <div id="special-cooldown" class="text-xs text-gray-500 mt-1"></div>
+                </div>
+            </div>
+
+            <!-- Zone de combat -->
+            <div class="flex-1 flex flex-col">
+                <!-- Arène de combat -->
+                <div id="battle-arena" class="flex-1 bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700 p-6 flex flex-col items-center justify-center min-h-96">
+                    <!-- État initial : prêt à combattre -->
+                    <div id="ready-state" class="text-center">
+                        <p class="text-2xl text-gray-400 mb-6">Prêt pour le combat ?</p>
+                        <button onclick="startBattle()" class="pulse-glow bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white text-2xl font-bold py-4 px-12 rounded-xl transition-all">
+                            ⚔️ COMBATTRE
+                        </button>
+                    </div>
+                    
+                    <!-- État combat -->
+                    <div id="battle-state" class="hidden w-full">
+                        <div class="flex items-center justify-between gap-4">
+                            <!-- Joueur -->
+                            <div id="player-fighter" class="flex-1 text-center">
+                                <div id="player-avatar" class="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-5xl mb-2"></div>
+                                <h4 id="player-fight-name" class="font-bold text-lg"></h4>
+                                <div class="mt-2">
+                                    <div class="h-4 bg-gray-700 rounded-full overflow-hidden">
+                                        <div id="player-health-bar" class="health-bar h-full w-full"></div>
+                                    </div>
+                                    <p id="player-health-text" class="text-sm text-gray-400 mt-1"></p>
+                                </div>
+                            </div>
+                            
+                            <!-- VS -->
+                            <div class="text-4xl font-black text-red-500">VS</div>
+                            
+                            <!-- Adversaire -->
+                            <div id="enemy-fighter" class="flex-1 text-center">
+                                <div id="enemy-avatar" class="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-red-500 to-orange-600 flex items-center justify-center text-5xl mb-2"></div>
+                                <h4 id="enemy-fight-name" class="font-bold text-lg"></h4>
+                                <div class="mt-2">
+                                    <div class="h-4 bg-gray-700 rounded-full overflow-hidden">
+                                        <div id="enemy-health-bar" class="health-bar h-full w-full"></div>
+                                    </div>
+                                    <p id="enemy-health-text" class="text-sm text-gray-400 mt-1"></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Log de combat -->
+                        <div id="battle-log" class="mt-6 bg-gray-900/50 rounded-xl p-4 h-32 overflow-y-auto text-sm">
+                        </div>
+                        
+                        <!-- Boutons d'action -->
+                        <div id="action-buttons" class="mt-4 flex gap-4 justify-center flex-wrap">
+                            <button onclick="playerAttack()" class="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-8 rounded-xl transition-all">
+                                ⚔️ Attaquer
+                            </button>
+                            <button onclick="playerDefend()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-8 rounded-xl transition-all">
+                                🛡️ Défendre
+                            </button>
+                            <button id="special-btn" onclick="useSpecial()" class="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 px-8 rounded-xl transition-all">
+                                ⚡ Spécial
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- État victoire/défaite -->
+                    <div id="result-state" class="hidden text-center">
+                        <div id="result-icon" class="text-8xl mb-4"></div>
+                        <h3 id="result-title" class="text-4xl font-bold mb-2"></h3>
+                        <p id="result-xp" class="text-xl text-purple-400 mb-6"></p>
+                        <div class="flex gap-4 justify-center">
+                            <button onclick="continueBattle()" class="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white font-bold py-3 px-8 rounded-xl transition-all">
+                                Continuer ⚔️
+                            </button>
+                            <button onclick="showScreen('menu-screen')" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-8 rounded-xl transition-all">
+                                Menu
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Historique des combats -->
+                <div class="mt-4 bg-gray-800/80 backdrop-blur rounded-xl p-4 border border-gray-700">
+                    <h3 class="text-lg font-bold mb-2 text-gray-400">📜 Historique</h3>
+                    <div id="battle-history" class="flex gap-2 overflow-x-auto pb-2">
+                        <span class="text-gray-500 text-sm">Aucun combat encore...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== DONNÉES DU JEU ====================
+        
+        // Définition des marques disponibles
+        const BRANDS = [
+            {
+                id: 'apple',
+                name: 'Apple',
+                icon: '🍎',
+                color: 'from-gray-600 to-gray-800',
+                baseStats: { force: 85, defense: 70, vitesse: 90, pv: 100 },
+                specialty: 'Innovation',
+                specialAbility: { name: 'Écosystème', description: 'Régénère 20 PV', effect: 'heal', value: 20 }
+            },
+            {
+                id: 'samsung',
+                name: 'Samsung',
+                icon: '📱',
+                color: 'from-blue-600 to-blue-800',
+                baseStats: { force: 80, defense: 90, vitesse: 75, pv: 110 },
+                specialty: 'Résistance',
+                specialAbility: { name: 'Bouclier Galaxy', description: '+50% défense pendant 2 tours', effect: 'defense_boost', value: 1.5, duration: 2 }
+            },
+            {
+                id: 'google',
+                name: 'Google',
+                icon: '🔍',
+                color: 'from-red-500 via-yellow-500 to-blue-500',
+                baseStats: { force: 75, defense: 65, vitesse: 100, pv: 90 },
+                specialty: 'Vitesse',
+                specialAbility: { name: 'Algorithme', description: 'Double attaque', effect: 'double_attack', value: 2 }
+            },
+            {
+                id: 'microsoft',
+                name: 'Microsoft',
+                icon: '🪟',
+                color: 'from-blue-500 to-green-500',
+                baseStats: { force: 80, defense: 80, vitesse: 80, pv: 100 },
+                specialty: 'Équilibre',
+                specialAbility: { name: 'Windows Update', description: 'Augmente toutes les stats de 20%', effect: 'all_boost', value: 1.2, duration: 3 }
+            },
+            {
+                id: 'amazon',
+                name: 'Amazon',
+                icon: '📦',
+                color: 'from-orange-500 to-yellow-600',
+                baseStats: { force: 70, defense: 85, vitesse: 70, pv: 130 },
+                specialty: 'Endurance',
+                specialAbility: { name: 'Prime Delivery', description: 'Attaque garantie (ignore défense)', effect: 'pierce', value: 1 }
+            },
+            {
+                id: 'tesla',
+                name: 'Tesla',
+                icon: '⚡',
+                color: 'from-red-600 to-red-800',
+                baseStats: { force: 95, defense: 60, vitesse: 95, pv: 85 },
+                specialty: 'Puissance',
+                specialAbility: { name: 'Charge Électrique', description: 'Attaque critique x2.5', effect: 'critical', value: 2.5 }
+            },
+            {
+                id: 'nike',
+                name: 'Nike',
+                icon: '👟',
+                color: 'from-gray-800 to-orange-600',
+                baseStats: { force: 85, defense: 65, vitesse: 100, pv: 95 },
+                specialty: 'Agilité',
+                specialAbility: { name: 'Just Do It', description: 'Esquive garantie + contre-attaque', effect: 'counter', value: 1.5 }
+            },
+            {
+                id: 'coca',
+                name: 'Coca-Cola',
+                icon: '🥤',
+                color: 'from-red-600 to-red-900',
+                baseStats: { force: 75, defense: 75, vitesse: 85, pv: 105 },
+                specialty: 'Popularité',
+                specialAbility: { name: 'Rafraîchissement', description: 'Récupère 30 PV', effect: 'heal', value: 30 }
+            },
+            {
+                id: 'mcdo',
+                name: "McDonald's",
+                icon: '🍔',
+                color: 'from-yellow-500 to-red-600',
+                baseStats: { force: 80, defense: 80, vitesse: 75, pv: 115 },
+                specialty: 'Sustentation',
+                specialAbility: { name: 'Happy Meal', description: 'Bonus aléatoire puissant', effect: 'random_boost', value: 2 }
+            },
+            {
+                id: 'netflix',
+                name: 'Netflix',
+                icon: '🎬',
+                color: 'from-red-700 to-black',
+                baseStats: { force: 70, defense: 70, vitesse: 90, pv: 100 },
+                specialty: 'Addiction',
+                specialAbility: { name: 'Binge Watch', description: "Draine 25 PV de l'ennemi", effect: 'drain', value: 25 }
+            }
+        ];
+
+        // Définition des arènes
+        const ARENAS = [
+            { id: 'bronze', name: 'Arène Bronze', color: 'bg-amber-700', textColor: 'text-amber-300', minLevel: 1, multiplier: 1, xpReward: 50 },
+            { id: 'silver', name: 'Arène Argent', color: 'bg-gray-500', textColor: 'text-gray-200', minLevel: 5, multiplier: 1.3, xpReward: 80 },
+            { id: 'gold', name: 'Arène Or', color: 'bg-yellow-600', textColor: 'text-yellow-200', minLevel: 10, multiplier: 1.6, xpReward: 120 },
+            { id: 'platinum', name: 'Arène Platine', color: 'bg-purple-600', textColor: 'text-purple-200', minLevel: 15, multiplier: 2, xpReward: 180 },
+            { id: 'diamond', name: 'Arène Diamant', color: 'bg-cyan-500', textColor: 'text-cyan-100', minLevel: 20, multiplier: 2.5, xpReward: 250 }
+        ];
+
+        // ==================== ÉTAT DU JEU ====================
+        
+        let gameState = {
+            selectedBrand: null,
+            level: 1,
+            xp: 0,
+            xpToNextLevel: 100,
+            upgradePoints: 0,
+            totalWins: 0,
+            totalLosses: 0,
+            currentArena: 0,
+            stats: { force: 0, defense: 0, vitesse: 0, pv: 0 },
+            bonusStats: { force: 0, defense: 0, vitesse: 0, pv: 0 },
+            specialCooldown: 0,
+            battleHistory: []
+        };
+
+        let battleState = {
+            playerHP: 0,
+            playerMaxHP: 0,
+            enemyHP: 0,
+            enemyMaxHP: 0,
+            enemy: null,
+            turn: 0,
+            playerDefending: false,
+            playerBuffs: {},
+            inProgress: false
+        };
+
+        // ==================== FONCTIONS UTILITAIRES ====================
+        
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+            
+            if (screenId === 'brand-select') renderBrandSelection();
+            if (screenId === 'scores') renderScores();
+            if (screenId === 'game-screen') updateGameUI();
+        }
+
+        function saveGame() {
+            localStorage.setItem('guerreDesMarques', JSON.stringify(gameState));
+        }
+
+        function loadGame() {
+            const saved = localStorage.getItem('guerreDesMarques');
+            if (saved) {
+                gameState = JSON.parse(saved);
+                return true;
+            }
+            return false;
+        }
+
+        function resetProgress() {
+            if (confirm('Êtes-vous sûr de vouloir réinitialiser toute votre progression ?')) {
+                localStorage.removeItem('guerreDesMarques');
+                localStorage.removeItem('guerreDesMarquesScores');
+                location.reload();
+            }
+        }
+
+        function calculateXPForLevel(level) {
+            return Math.floor(100 * Math.pow(1.5, level - 1));
+        }
+
+        function getCurrentArena() {
+            let arena = ARENAS[0];
+            for (let i = ARENAS.length - 1; i >= 0; i--) {
+                if (gameState.level >= ARENAS[i].minLevel) {
+                    arena = ARENAS[i];
+                    break;
+                }
+            }
+            return arena;
+        }
+
+        // ==================== SÉLECTION DE MARQUE ====================
+        
+        function renderBrandSelection() {
+            const grid = document.getElementById('brands-grid');
+            grid.innerHTML = BRANDS.map(brand => `
+                <div class="brand-card bg-gradient-to-br ${brand.color} rounded-2xl p-6 cursor-pointer border-2 border-transparent hover:border-white/50"
+                     onclick="selectBrand('${brand.id}')">
+                    <div class="text-6xl text-center mb-4">${brand.icon}</div>
+                    <h3 class="text-2xl font-bold text-center mb-2">${brand.name}</h3>
+                    <p class="text-center text-white/70 text-sm mb-4">Spécialité: ${brand.specialty}</p>
+                    
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span>⚔️ Force</span>
+                            <div class="flex items-center gap-2">
+                                <div class="w-24 h-2 bg-black/30 rounded-full overflow-hidden">
+                                    <div class="h-full bg-red-400" style="width: ${brand.baseStats.force}%"></div>
+                                </div>
+                                <span>${brand.baseStats.force}</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>🛡️ Défense</span>
+                            <div class="flex items-center gap-2">
+                                <div class="w-24 h-2 bg-black/30 rounded-full overflow-hidden">
+                                    <div class="h-full bg-blue-400" style="width: ${brand.baseStats.defense}%"></div>
+                                </div>
+                                <span>${brand.baseStats.defense}</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>💨 Vitesse</span>
+                            <div class="flex items-center gap-2">
+                                <div class="w-24 h-2 bg-black/30 rounded-full overflow-hidden">
+                                    <div class="h-full bg-green-400" style="width: ${brand.baseStats.vitesse}%"></div>
+                                </div>
+                                <span>${brand.baseStats.vitesse}</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>❤️ PV</span>
+                            <div class="flex items-center gap-2">
+                                <div class="w-24 h-2 bg-black/30 rounded-full overflow-hidden">
+                                    <div class="h-full bg-pink-400" style="width: ${brand.baseStats.pv}%"></div>
+                                </div>
+                                <span>${brand.baseStats.pv}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 p-2 bg-black/30 rounded-lg text-center">
+                        <span class="text-yellow-400">⚡ ${brand.specialAbility.name}</span>
+                        <p class="text-xs text-white/70">${brand.specialAbility.description}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function selectBrand(brandId) {
+            const brand = BRANDS.find(b => b.id === brandId);
+            if (!brand) return;
+
+            // Charger la sauvegarde existante ou créer nouveau
+            const hasExistingSave = loadGame();
+            
+            if (!hasExistingSave || gameState.selectedBrand !== brandId) {
+                // Nouvelle partie ou changement de marque
+                gameState = {
+                    selectedBrand: brandId,
+                    level: 1,
+                    xp: 0,
+                    xpToNextLevel: 100,
+                    upgradePoints: 0,
+                    totalWins: 0,
+                    totalLosses: 0,
+                    currentArena: 0,
+                    stats: { ...brand.baseStats },
+                    bonusStats: { force: 0, defense: 0, vitesse: 0, pv: 0 },
+                    specialCooldown: 0,
+                    battleHistory: []
+                };
+            }
+            
+            saveGame();
+            showScreen('game-screen');
+        }
+
+        // ==================== INTERFACE DE JEU ====================
+        
+        function updateGameUI() {
+            const brand = BRANDS.find(b => b.id === gameState.selectedBrand);
+            if (!brand) return;
+
+            // Header
+            document.getElementById('player-brand-icon').textContent = brand.icon;
+            document.getElementById('player-brand-name').textContent = brand.name;
+            document.getElementById('player-level').textContent = `Niveau ${gameState.level} • ${gameState.totalWins}V / ${gameState.totalLosses}D`;
+            
+            // XP Bar
+            const xpPercent = (gameState.xp / gameState.xpToNextLevel) * 100;
+            document.getElementById('xp-bar').style.width = `${xpPercent}%`;
+            document.getElementById('xp-text').textContent = `${gameState.xp} / ${gameState.xpToNextLevel}`;
+            
+            // Arena Badge
+            const arena = getCurrentArena();
+            const arenaBadge = document.getElementById('arena-badge');
+            arenaBadge.className = `px-4 py-2 rounded-xl font-bold ${arena.color} ${arena.textColor}`;
+            arenaBadge.textContent = arena.name;
+            
+            // Stats
+            const totalStats = {
+                force: gameState.stats.force + gameState.bonusStats.force,
+                defense: gameState.stats.defense + gameState.bonusStats.defense,
+                vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse,
+                pv: gameState.stats.pv + gameState.bonusStats.pv
+            };
+            
+            document.getElementById('player-stats').innerHTML = `
+                <div class="flex justify-between items-center">
+                    <span>⚔️ Force</span>
+                    <span class="font-bold text-red-400">${totalStats.force} ${gameState.bonusStats.force > 0 ? `<span class="text-green-400">(+${gameState.bonusStats.force})</span>` : ''}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span>🛡️ Défense</span>
+                    <span class="font-bold text-blue-400">${totalStats.defense} ${gameState.bonusStats.defense > 0 ? `<span class="text-green-400">(+${gameState.bonusStats.defense})</span>` : ''}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span>💨 Vitesse</span>
+                    <span class="font-bold text-green-400">${totalStats.vitesse} ${gameState.bonusStats.vitesse > 0 ? `<span class="text-green-400">(+${gameState.bonusStats.vitesse})</span>` : ''}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span>❤️ PV Max</span>
+                    <span class="font-bold text-pink-400">${totalStats.pv} ${gameState.bonusStats.pv > 0 ? `<span class="text-green-400">(+${gameState.bonusStats.pv})</span>` : ''}</span>
+                </div>
+            `;
+            
+            // Upgrade Points
+            document.getElementById('upgrade-points').textContent = gameState.upgradePoints;
+            
+            // Upgrades
+            document.getElementById('upgrades-list').innerHTML = `
+                <button onclick="upgrade('force')" class="w-full flex justify-between items-center p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg ${gameState.upgradePoints <= 0 ? 'opacity-50 cursor-not-allowed' : ''}">
+                    <span>⚔️ Force +5</span>
+                    <span class="text-yellow-400">1 pt</span>
+                </button>
+                <button onclick="upgrade('defense')" class="w-full flex justify-between items-center p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg ${gameState.upgradePoints <= 0 ? 'opacity-50 cursor-not-allowed' : ''}">
+                    <span>🛡️ Défense +5</span>
+                    <span class="text-yellow-400">1 pt</span>
+                </button>
+                <button onclick="upgrade('vitesse')" class="w-full flex justify-between items-center p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg ${gameState.upgradePoints <= 0 ? 'opacity-50 cursor-not-allowed' : ''}">
+                    <span>💨 Vitesse +5</span>
+                    <span class="text-yellow-400">1 pt</span>
+                </button>
+                <button onclick="upgrade('pv')" class="w-full flex justify-between items-center p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg ${gameState.upgradePoints <= 0 ? 'opacity-50 cursor-not-allowed' : ''}">
+                    <span>❤️ PV +10</span>
+                    <span class="text-yellow-400">1 pt</span>
+                </button>
+            `;
+            
+            // Special Ability
+            const specialDiv = document.getElementById('special-ability');
+            specialDiv.innerHTML = `
+                <p class="font-bold text-yellow-300">⚡ ${brand.specialAbility.name}</p>
+                <p class="text-gray-400">${brand.specialAbility.description}</p>
+            `;
+            document.getElementById('special-cooldown').textContent = gameState.specialCooldown > 0 ? 
+                `Recharge: ${gameState.specialCooldown} combat(s)` : 'Prêt !';
+            
+            // Battle History
+            const historyDiv = document.getElementById('battle-history');
+            if (gameState.battleHistory.length === 0) {
+                historyDiv.innerHTML = '<span class="text-gray-500 text-sm">Aucun combat encore...</span>';
+            } else {
+                historyDiv.innerHTML = gameState.battleHistory.slice(-10).map(h => `
+                    <div class="flex-shrink-0 px-3 py-1 rounded-lg ${h.won ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}">
+                        ${h.won ? '✓' : '✗'} vs ${h.enemy}
+                    </div>
+                `).join('');
+            }
+        }
+
+        function upgrade(stat) {
+            if (gameState.upgradePoints <= 0) return;
+            
+            gameState.upgradePoints--;
+            if (stat === 'pv') {
+                gameState.bonusStats[stat] += 10;
+            } else {
+                gameState.bonusStats[stat] += 5;
+            }
+            
+            saveGame();
+            updateGameUI();
+        }
+
+        // ==================== SYSTÈME DE COMBAT ====================
+        
+        function startBattle() {
+            const brand = BRANDS.find(b => b.id === gameState.selectedBrand);
+            const arena = getCurrentArena();
+            
+            // Sélectionner un ennemi aléatoire (différent du joueur)
+            const enemies = BRANDS.filter(b => b.id !== gameState.selectedBrand);
+            const enemyBrand = enemies[Math.floor(Math.random() * enemies.length)];
+            
+            // Calculer les stats de l'ennemi avec le multiplicateur d'arène
+            const enemyStats = {
+                force: Math.floor(enemyBrand.baseStats.force * arena.multiplier),
+                defense: Math.floor(enemyBrand.baseStats.defense * arena.multiplier),
+                vitesse: Math.floor(enemyBrand.baseStats.vitesse * arena.multiplier),
+                pv: Math.floor(enemyBrand.baseStats.pv * arena.multiplier)
+            };
+            
+            // Stats du joueur
+            const playerStats = {
+                force: gameState.stats.force + gameState.bonusStats.force,
+                defense: gameState.stats.defense + gameState.bonusStats.defense,
+                vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse,
+                pv: gameState.stats.pv + gameState.bonusStats.pv
+            };
+            
+            // Initialiser l'état du combat
+            battleState = {
+                playerHP: playerStats.pv,
+                playerMaxHP: playerStats.pv,
+                enemyHP: enemyStats.pv,
+                enemyMaxHP: enemyStats.pv,
+                enemy: { brand: enemyBrand, stats: enemyStats },
+                turn: 0,
+                playerDefending: false,
+                playerBuffs: {},
+                inProgress: true
+            };
+            
+            // Afficher l'interface de combat
+            document.getElementById('ready-state').classList.add('hidden');
+            document.getElementById('battle-state').classList.remove('hidden');
+            document.getElementById('result-state').classList.add('hidden');
+            
+            // Mettre à jour les avatars
+            document.getElementById('player-avatar').textContent = brand.icon;
+            document.getElementById('player-fight-name').textContent = brand.name;
+            document.getElementById('enemy-avatar').textContent = enemyBrand.icon;
+            document.getElementById('enemy-fight-name').textContent = enemyBrand.name + ` (${arena.name})`;
+            
+            // Réinitialiser le log
+            document.getElementById('battle-log').innerHTML = `
+                <p class="text-yellow-400">⚔️ Combat commencé contre ${enemyBrand.name} !</p>
+            `;
+            
+            // Mettre à jour le bouton spécial
+            const specialBtn = document.getElementById('special-btn');
+            specialBtn.disabled = gameState.specialCooldown > 0;
+            specialBtn.classList.toggle('opacity-50', gameState.specialCooldown > 0);
+            
+            updateBattleUI();
+        }
+
+        function updateBattleUI() {
+            // Barres de vie
+            const playerHealthPercent = (battleState.playerHP / battleState.playerMaxHP) * 100;
+            const enemyHealthPercent = (battleState.enemyHP / battleState.enemyMaxHP) * 100;
+            
+            const playerHealthBar = document.getElementById('player-health-bar');
+            const enemyHealthBar = document.getElementById('enemy-health-bar');
+            
+            playerHealthBar.style.width = `${playerHealthPercent}%`;
+            enemyHealthBar.style.width = `${enemyHealthPercent}%`;
+            
+            playerHealthBar.classList.toggle('health-bar-low', playerHealthPercent < 30);
+            enemyHealthBar.classList.toggle('health-bar-low', enemyHealthPercent < 30);
+            
+            document.getElementById('player-health-text').textContent = `${battleState.playerHP} / ${battleState.playerMaxHP} PV`;
+            document.getElementById('enemy-health-text').textContent = `${battleState.enemyHP} / ${battleState.enemyMaxHP} PV`;
+        }
+
+        function addBattleLog(message, type = 'normal') {
+            const log = document.getElementById('battle-log');
+            const colors = {
+                normal: 'text-gray-300',
+                player: 'text-blue-400',
+                enemy: 'text-red-400',
+                special: 'text-yellow-400',
+                heal: 'text-green-400',
+                damage: 'text-orange-400'
+            };
+            log.innerHTML += `<p class="${colors[type]}">${message}</p>`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function calculateDamage(attacker, defender, isPierce = false) {
+            const baseDamage = attacker.force;
+            const defenseReduction = isPierce ? 0 : defender.defense * 0.5;
+            const randomFactor = 0.8 + Math.random() * 0.4; // 80% - 120%
+            const speedBonus = attacker.vitesse > defender.vitesse ? 1.1 : 1;
+            
+            let damage = Math.floor((baseDamage - defenseReduction) * randomFactor * speedBonus);
+            return Math.max(damage, 5); // Minimum 5 dégâts
+        }
+
+        function playerAttack() {
+            if (!battleState.inProgress) return;
+            
+            const brand = BRANDS.find(b => b.id === gameState.selectedBrand);
+            const playerStats = {
+                force: gameState.stats.force + gameState.bonusStats.force,
+                defense: gameState.stats.defense + gameState.bonusStats.defense,
+                vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse
+            };
+            
+            // Appliquer les buffs
+            let modifiedStats = { ...playerStats };
+            if (battleState.playerBuffs.all_boost) {
+                modifiedStats.force *= battleState.playerBuffs.all_boost.value;
+                modifiedStats.defense *= battleState.playerBuffs.all_boost.value;
+                modifiedStats.vitesse *= battleState.playerBuffs.all_boost.value;
+            }
+            
+            // Animation d'attaque
+            document.getElementById('player-fighter').classList.add('attack-right');
+            setTimeout(() => {
+                document.getElementById('player-fighter').classList.remove('attack-right');
+                document.getElementById('enemy-fighter').classList.add('damage');
+                setTimeout(() => document.getElementById('enemy-fighter').classList.remove('damage'), 300);
+            }, 250);
+            
+            const damage = calculateDamage(modifiedStats, battleState.enemy.stats);
+            battleState.enemyHP = Math.max(0, battleState.enemyHP - damage);
+            
+            addBattleLog(`${brand.name} attaque pour ${damage} dégâts !`, 'player');
+            
+            battleState.playerDefending = false;
+            updateBattleUI();
+            
+            if (battleState.enemyHP <= 0) {
+                endBattle(true);
+            } else {
+                setTimeout(enemyTurn, 1000);
+            }
+        }
+
+        function playerDefend() {
+            if (!battleState.inProgress) return;
+            
+            battleState.playerDefending = true;
+            addBattleLog(`Vous vous mettez en position défensive ! (+50% défense)`, 'player');
+            
+            setTimeout(enemyTurn, 500);
+        }
+
+        function useSpecial() {
+            if (!battleState.inProgress || gameState.specialCooldown > 0) return;
+            
+            const brand = BRANDS.find(b => b.id === gameState.selectedBrand);
+            const ability = brand.specialAbility;
+            
+            addBattleLog(`⚡ ${brand.name} utilise ${ability.name} !`, 'special');
+            
+            switch (ability.effect) {
+                case 'heal':
+                    battleState.playerHP = Math.min(battleState.playerMaxHP, battleState.playerHP + ability.value);
+                    addBattleLog(`Récupère ${ability.value} PV !`, 'heal');
+                    break;
+                    
+                case 'defense_boost':
+                    battleState.playerBuffs.defense_boost = { value: ability.value, turns: ability.duration };
+                    addBattleLog(`Défense augmentée de ${(ability.value - 1) * 100}% pendant ${ability.duration} tours !`, 'special');
+                    break;
+                    
+                case 'double_attack':
+                    const playerStats = {
+                        force: (gameState.stats.force + gameState.bonusStats.force) * 2,
+                        defense: gameState.stats.defense + gameState.bonusStats.defense,
+                        vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse
+                    };
+                    const damage = calculateDamage(playerStats, battleState.enemy.stats);
+                    battleState.enemyHP = Math.max(0, battleState.enemyHP - damage);
+                    addBattleLog(`Double attaque ! ${damage} dégâts !`, 'damage');
+                    break;
+                    
+                case 'all_boost':
+                    battleState.playerBuffs.all_boost = { value: ability.value, turns: ability.duration };
+                    addBattleLog(`Toutes les stats +${(ability.value - 1) * 100}% pendant ${ability.duration} tours !`, 'special');
+                    break;
+                    
+                case 'pierce':
+                    const pierceStats = {
+                        force: gameState.stats.force + gameState.bonusStats.force,
+                        vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse
+                    };
+                    const pierceDamage = calculateDamage(pierceStats, battleState.enemy.stats, true);
+                    battleState.enemyHP = Math.max(0, battleState.enemyHP - pierceDamage);
+                    addBattleLog(`Attaque perforante ! ${pierceDamage} dégâts (ignore la défense) !`, 'damage');
+                    break;
+                    
+                case 'critical':
+                    const critStats = {
+                        force: (gameState.stats.force + gameState.bonusStats.force) * ability.value,
+                        vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse
+                    };
+                    const critDamage = calculateDamage(critStats, battleState.enemy.stats);
+                    battleState.enemyHP = Math.max(0, battleState.enemyHP - critDamage);
+                    addBattleLog(`CRITIQUE ! ${critDamage} dégâts !`, 'damage');
+                    break;
+                    
+                case 'counter':
+                    battleState.playerBuffs.counter = { value: ability.value, turns: 1 };
+                    addBattleLog(`Position de contre-attaque ! L'ennemi sera contre-attaqué !`, 'special');
+                    break;
+                    
+                case 'random_boost':
+                    const effects = ['force', 'defense', 'vitesse', 'heal'];
+                    const randomEffect = effects[Math.floor(Math.random() * effects.length)];
+                    if (randomEffect === 'heal') {
+                        battleState.playerHP = Math.min(battleState.playerMaxHP, battleState.playerHP + 40);
+                        addBattleLog(`Bonus aléatoire: +40 PV !`, 'heal');
+                    } else {
+                        battleState.playerBuffs[randomEffect + '_boost'] = { value: 2, turns: 3 };
+                        addBattleLog(`Bonus aléatoire: ${randomEffect} x2 pendant 3 tours !`, 'special');
+                    }
+                    break;
+                    
+                case 'drain':
+                    const drainAmount = ability.value;
+                    battleState.enemyHP = Math.max(0, battleState.enemyHP - drainAmount);
+                    battleState.playerHP = Math.min(battleState.playerMaxHP, battleState.playerHP + drainAmount);
+                    addBattleLog(`Draine ${drainAmount} PV de l'ennemi !`, 'damage');
+                    break;
+            }
+            
+            gameState.specialCooldown = 3;
+            document.getElementById('special-btn').disabled = true;
+            document.getElementById('special-btn').classList.add('opacity-50');
+            
+            updateBattleUI();
+            
+            if (battleState.enemyHP <= 0) {
+                endBattle(true);
+            } else {
+                setTimeout(enemyTurn, 1000);
+            }
+        }
+
+        function enemyTurn() {
+            if (!battleState.inProgress) return;
+            
+            const enemy = battleState.enemy;
+            const playerStats = {
+                force: gameState.stats.force + gameState.bonusStats.force,
+                defense: gameState.stats.defense + gameState.bonusStats.defense,
+                vitesse: gameState.stats.vitesse + gameState.bonusStats.vitesse
+            };
+            
+            // Calculer la défense modifiée
+            let modifiedDefense = playerStats.defense;
+            if (battleState.playerDefending) modifiedDefense *= 1.5;
+            if (battleState.playerBuffs.defense_boost) modifiedDefense *= battleState.playerBuffs.defense_boost.value;
+            
+            // Animation d'attaque ennemie
+            document.getElementById('enemy-fighter').classList.add('attack-left');
+            setTimeout(() => {
+                document.getElementById('enemy-fighter').classList.remove('attack-left');
+                document.getElementById('player-fighter').classList.add('damage');
+                setTimeout(() => document.getElementById('player-fighter').classList.remove('damage'), 300);
+            }, 250);
+            
+            let damage = calculateDamage(enemy.stats, { ...playerStats, defense: modifiedDefense });
+            
+            // Contre-attaque ?
+            if (battleState.playerBuffs.counter) {
+                addBattleLog(`${enemy.brand.name} attaque mais vous contre-attaquez !`, 'enemy');
+                damage = Math.floor(damage * 0.5);
+                const counterDamage = calculateDamage(playerStats, enemy.stats);
+                battleState.enemyHP = Math.max(0, battleState.enemyHP - counterDamage);
+                addBattleLog(`Contre-attaque ! ${counterDamage} dégâts à l'ennemi !`, 'player');
+                delete battleState.playerBuffs.counter;
+            }
+            
+            battleState.playerHP = Math.max(0, battleState.playerHP - damage);
+            addBattleLog(`${enemy.brand.name} attaque pour ${damage} dégâts !`, 'enemy');
+            
+            // Décrémenter les buffs
+            Object.keys(battleState.playerBuffs).forEach(buff => {
+                if (battleState.playerBuffs[buff].turns) {
+                    battleState.playerBuffs[buff].turns--;
+                    if (battleState.playerBuffs[buff].turns <= 0) {
+                        delete battleState.playerBuffs[buff];
+                        addBattleLog(`L'effet ${buff} s'est terminé.`, 'normal');
+                    }
+                }
+            });
+            
+            battleState.turn++;
+            updateBattleUI();
+            
+            if (battleState.playerHP <= 0) {
+                endBattle(false);
+            }
+        }
+
+        function endBattle(victory) {
+            battleState.inProgress = false;
+            
+            const arena = getCurrentArena();
+            let xpGained = 0;
+            
+            if (victory) {
+                xpGained = arena.xpReward + Math.floor(Math.random() * 30);
+                gameState.totalWins++;
+                gameState.xp += xpGained;
+                
+                // Level up ?
+                while (gameState.xp >= gameState.xpToNextLevel) {
+                    gameState.xp -= gameState.xpToNextLevel;
+                    gameState.level++;
+                    gameState.upgradePoints += 2;
+                    gameState.xpToNextLevel = calculateXPForLevel(gameState.level);
+                    addBattleLog(`🎉 NIVEAU ${gameState.level} ATTEINT ! +2 points d'amélioration !`, 'special');
+                }
+                
+                if (gameState.specialCooldown > 0) gameState.specialCooldown--;
+                
+            } else {
+                gameState.totalLosses++;
+                xpGained = Math.floor(arena.xpReward * 0.2);
+                gameState.xp += xpGained;
+            }
+            
+            // Historique
+            gameState.battleHistory.push({
+                enemy: battleState.enemy.brand.name,
+                won: victory
+            });
+            
+            saveGame();
+            saveScore();
+            
+            // Afficher le résultat
+            document.getElementById('battle-state').classList.add('hidden');
+            document.getElementById('result-state').classList.remove('hidden');
+            
+            const resultIcon = document.getElementById('result-icon');
+            const resultTitle = document.getElementById('result-title');
+            const resultXP = document.getElementById('result-xp');
+            
+            if (victory) {
+                resultIcon.textContent = '🏆';
+                resultIcon.classList.add('victory');
+                resultTitle.textContent = 'VICTOIRE !';
+                resultTitle.className = 'text-4xl font-bold mb-2 text-green-400';
+            } else {
+                resultIcon.textContent = '💀';
+                resultIcon.classList.remove('victory');
+                resultTitle.textContent = 'DÉFAITE...';
+                resultTitle.className = 'text-4xl font-bold mb-2 text-red-400';
+            }
+            
+            resultXP.textContent = `+${xpGained} XP`;
+            
+            updateGameUI();
+        }
+
+        function continueBattle() {
+            document.getElementById('result-state').classList.add('hidden');
+            document.getElementById('ready-state').classList.remove('hidden');
+        }
+
+        // ==================== SYSTÈME DE SCORES ====================
+        
+        function saveScore() {
+            let scores = JSON.parse(localStorage.getItem('guerreDesMarquesScores') || '[]');
+            
+            const brand = BRANDS.find(b => b.id === gameState.selectedBrand);
+            const existingIndex = scores.findIndex(s => s.brand === brand.name);
+            
+            const scoreData = {
+                brand: brand.name,
+                icon: brand.icon,
+                level: gameState.level,
+                wins: gameState.totalWins,
+                losses: gameState.totalLosses,
+                date: new Date().toLocaleDateString('fr-FR')
+            };
+            
+            if (existingIndex >= 0) {
+                if (scores[existingIndex].level < gameState.level || 
+                    (scores[existingIndex].level === gameState.level && scores[existingIndex].wins < gameState.totalWins)) {
+                    scores[existingIndex] = scoreData;
+                }
+            } else {
+                scores.push(scoreData);
+            }
+            
+            scores.sort((a, b) => b.level - a.level || b.wins - a.wins);
+            scores = scores.slice(0, 10);
+            
+            localStorage.setItem('guerreDesMarquesScores', JSON.stringify(scores));
+        }
+
+        function renderScores() {
+            const scores = JSON.parse(localStorage.getItem('guerreDesMarquesScores') || '[]');
+            const list = document.getElementById('scores-list');
+            
+            if (scores.length === 0) {
+                list.innerHTML = '<p class="text-center text-gray-500 py-8">Aucun score enregistré. Jouez pour apparaître ici !</p>';
+                return;
+            }
+            
+            list.innerHTML = scores.map((score, index) => `
+                <div class="flex items-center gap-4 p-4 bg-gray-700/50 rounded-xl ${index === 0 ? 'border-2 border-yellow-500' : ''}">
+                    <span class="text-2xl font-bold ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-amber-600' : 'text-gray-500'}">
+                        #${index + 1}
+                    </span>
+                    <span class="text-3xl">${score.icon}</span>
+                    <div class="flex-1">
+                        <h4 class="font-bold">${score.brand}</h4>
+                        <p class="text-sm text-gray-400">Niveau ${score.level} • ${score.wins}V / ${score.losses}D</p>
+                    </div>
+                    <span class="text-sm text-gray-500">${score.date}</span>
+                </div>
+            `).join('');
+        }
+
+        // ==================== INITIALISATION ====================
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            // Charger la sauvegarde si elle existe
+            if (loadGame() && gameState.selectedBrand) {
+                // Le joueur a déjà une partie en cours
+                console.log('Partie chargée:', gameState);
+            }
+        });
+    </script>
+</body>
+</html>
