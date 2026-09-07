@@ -112,6 +112,7 @@
         <span class="hud-pill hud-pill--round">Round <b id="hud-round">1</b></span>
         <span class="hud-pill" id="hud-turn">À vous</span>
         <div class="hud-tools">
+          <button class="chip-btn chip-btn--sm" id="btn-cine" title="Cinématiques d’ultime longues ou courtes">🎬 Ciné : on</button>
           <button class="chip-btn chip-btn--sm" id="btn-speed" title="Vitesse des animations">⏩ ×1</button>
           <button class="chip-btn chip-btn--sm" id="btn-auto" title="Laisser l’IA jouer">🤖 Auto : off</button>
         </div>
@@ -282,17 +283,23 @@
 </main>
 
 <!-- Cinématique d'ultime -->
-<div class="cine" id="cine" aria-hidden="true">
+<div class="cine" id="cine" aria-hidden="true" data-fx="distort">
+  <div class="cine__dim"></div>
   <div class="cine__bg"></div>
   <div class="cine__rays"></div>
   <div class="cine__stripe"></div>
-  <div class="cine__cut"><span class="cine__mono" id="cine-mono">A</span></div>
-  <div class="cine__text">
-    <span class="cine__brand" id="cine-brand">Apple</span>
-    <span class="cine__ult" id="cine-ult">Ultime</span>
-    <span class="cine__phrase" id="cine-phrase"></span>
+  <div class="cine__spot"></div>
+  <div class="cine__portrait"><span class="cine__mono" id="cine-mono">A</span></div>
+  <div class="cine__stack">
+    <span class="cine__kicker" id="cine-kicker">ULTIMATE !</span>
+    <div class="cine__text">
+      <span class="cine__brand" id="cine-brand">Apple</span>
+      <span class="cine__ult" id="cine-ult">Ultime</span>
+      <span class="cine__phrase" id="cine-phrase"></span>
+    </div>
   </div>
-  <div class="cine__shards" id="cine-shards"></div>
+  <div class="cine__fx" id="cine-fx"></div>
+  <div class="cine__flash"></div>
   <i class="cine__bar cine__bar--top"></i>
   <i class="cine__bar cine__bar--bottom"></i>
 </div>

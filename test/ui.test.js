@@ -59,6 +59,31 @@ function click(doc, selector) {
   return el;
 }
 
+test('chaque marque possède un style de cinématique et des particules dédiés', () => {
+  const brands = fs.readFileSync(path.join(ROOT, 'js/brands.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'css/style.css'), 'utf8');
+  const ui = fs.readFileSync(path.join(ROOT, 'js/ui.js'), 'utf8');
+
+  const fxKeys = Array.from(brands.matchAll(/fx: '([a-z]+)'/g)).map((m) => m[1]);
+  assert.strictEqual(fxKeys.length, 11, 'chaque marque doit annoncer son style d’ultime');
+  assert.strictEqual(new Set(fxKeys).size, 11, 'chaque marque doit avoir son propre style');
+
+  fxKeys.forEach((k) => {
+    assert.ok(css.includes('.cine[data-fx="' + k + '"]'), 'style CSS manquant pour l’ultime : ' + k);
+    assert.ok(new RegExp(k + ':\\s*\\{\\s*particle:').test(ui), 'particules manquantes pour : ' + k);
+  });
+
+  const particles = Array.from(ui.matchAll(/particle: '([a-z]+)'/g)).map((m) => m[1]);
+  assert.strictEqual(new Set(particles).size, 11, 'chaque marque doit avoir ses propres particules');
+  particles.forEach((p) => assert.ok(css.includes('.up--' + p), 'classe CSS manquante : .up--' + p));
+
+  // Bannières de résultat
+  ['critical', 'block', 'dodge'].forEach((v) => {
+    assert.ok(css.includes('.announce__text--' + v), 'style de bannière manquant : ' + v);
+  });
+  assert.ok(/RESULT_BANNER[\s\S]*CRITICAL/.test(ui), 'bannière CRITICAL absente');
+});
+
 test('interface : un duel complet anime barres, historique et K.O.', { timeout: 90000 }, async () => {
   const dom = await openGame();
   const doc = dom.window.document;
@@ -227,17 +252,18 @@ test('interface : la jauge ultime se charge, lance la cinématique puis passe en
     assert.ok(card, 'carte manquante : ' + id);
     card.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
   };
-  // Samsung (482 PV, défense 88) tient largement le temps de charger la jauge
-  pick('samsung');
+  // Apple agit en premier et son ultime met un critique garanti :
+  // Microsoft, peu offensif, laisse le temps de charger la jauge.
+  pick('apple');
   await waitFor(dom, () => doc.querySelector('#select-title').textContent.includes('adversaire'), 5000, 'étape 2');
-  pick('intel');
+  pick('microsoft');
   await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 5000, 'arène');
 
   // Jauge d'ultime présente et vide au départ
   assert.strictEqual(doc.querySelector('#ult-txt-left').textContent, '0 %');
   const btnUlt = doc.querySelector('#btn-ultimate');
   assert.strictEqual(btnUlt.disabled, true, 'l’ultime ne doit pas être disponible à 0 %');
-  assert.match(btnUlt.textContent, /Galaxy Storm/, 'le nom de l’ultime doit être affiché');
+  assert.match(btnUlt.textContent, /Reality Distortion/, 'le nom de l’ultime doit être affiché');
 
   // Attaquer jusqu'à ce que la jauge affiche 100 % (≈ 4 rounds)
   let guard = 20;
@@ -255,14 +281,22 @@ test('interface : la jauge ultime se charge, lance la cinématique puis passe en
   assert.match(doc.querySelector('#chips-left').textContent, /Ultime prêt/, 'puce « Ultime prêt » absente');
 
   // Déclenchement → cinématique plein écran
+  doc.querySelector('#announce').innerHTML = '';       // purge d'une éventuelle bannière précédente
   click(doc, '#btn-ultimate');
   await waitFor(dom, () => doc.querySelector('#cine').classList.contains('is-open'), 20000, 'cinématique d’ultime');
-  assert.strictEqual(doc.querySelector('#cine-brand').textContent, 'Samsung');
-  assert.strictEqual(doc.querySelector('#cine-ult').textContent, 'Galaxy Storm');
+  const cine = doc.querySelector('#cine');
+  assert.strictEqual(doc.querySelector('#cine-brand').textContent, 'Apple');
+  assert.strictEqual(doc.querySelector('#cine-ult').textContent, 'Reality Distortion');
   assert.match(doc.querySelector('#cine-phrase').textContent, /\S/, 'phrase de l’ultime absente');
-  assert.strictEqual(doc.querySelector('#cine').dataset.fx, 'storm');
-  assert.ok(doc.querySelector('#cine-mono').textContent.length > 0, 'portrait de la cinématique absent');
+  assert.strictEqual(cine.dataset.fx, 'distort', 'style propre à la marque absent');
+  assert.strictEqual(doc.querySelector('#cine-kicker').textContent, 'ULTIMATE !', 'bandeau ULTIMATE absent');
+  assert.ok(doc.querySelector('#cine-mono').textContent.length > 0, 'portrait de la marque absent');
+  assert.ok(doc.querySelector('#cine-portrait, .cine__portrait'), 'zoom sur la marque absent');
   assert.ok(doc.body.classList.contains('is-quake-hard'), 'l’écran doit trembler pendant l’ultime');
+  assert.ok(doc.body.classList.contains('is-ult-focus'), 'l’arène doit être assombrie pendant l’ultime');
+  assert.ok(doc.querySelectorAll('#cine-fx .up').length > 0, 'particules de l’ultime absentes');
+  assert.ok(doc.querySelector('#cine-fx .up--shard'), 'particules propres à Apple absentes');
+  assert.ok(!cine.classList.contains('is-short'), 'les animations longues doivent être actives par défaut');
 
   // Fin de la cinématique → jauge à 0 et recharge armée
   await waitFor(dom, () => !doc.querySelector('#cine').classList.contains('is-open'), 20000, 'fin de la cinématique');
@@ -272,11 +306,18 @@ test('interface : la jauge ultime se charge, lance la cinématique puis passe en
   assert.match(doc.querySelector('#ult-txt-left').textContent, /tour/, 'compteur de recharge absent');
   assert.strictEqual(doc.querySelector('#ult-fill-left').style.width, '0%', 'jauge non vidée');
 
+  // Bannière de résultat, affichée après les dégâts
+  await waitFor(dom, () => doc.querySelector('#announce .announce__text--banner'), 30000, 'bannière de résultat');
+  const banner = doc.querySelector('#announce .announce__text--banner');
+  assert.match(banner.textContent, /CRITICAL|K\.O\.|BLOCK|DODGE/, 'bannière de résultat inattendue');
+  const damageShown = parseInt(doc.querySelector('#hp-now-right').textContent, 10);
+  assert.ok(damageShown < 445, 'les dégâts doivent être appliqués après l’animation');
+
   // Ligne d'ultime dans l'historique détaillé (celle du joueur, à gauche)
   await waitFor(dom, () => doc.querySelector('#history-list .hrow--ult.hrow--left'), 30000, 'ligne d’ultime');
   const ultRow = doc.querySelector('#history-list .hrow--ult.hrow--left');
   assert.ok(ultRow, 'aucune ligne d’ultime du joueur dans l’historique');
-  assert.match(ultRow.textContent, /Galaxy Storm/);
+  assert.match(ultRow.textContent, /Reality Distortion/);
   assert.match(ultRow.querySelector('.tag--ult').textContent, /ULTIME/);
   assert.match(doc.querySelector('#history-recap').textContent, /ultime/, 'récapitulatif absent');
 
@@ -292,6 +333,75 @@ test('interface : la jauge ultime se charge, lance la cinématique puis passe en
   chipUlt.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
   assert.match(doc.querySelector('#history-list').className, /is-filter-ult/, 'filtre non appliqué');
   assert.ok(chipUlt.classList.contains('is-on'), 'puce de filtre non activée');
+
+  await tick(200);
+  dom.window.close();
+});
+
+test('interface : le bouton 🎬 Ciné raccourcit la cinématique d’ultime', { timeout: 180000 }, async () => {
+  const dom = await openGame();
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#btn-speed');
+  click(doc, '#btn-speed');
+
+  // Cinématiques longues activées par défaut, puis coupées
+  const btnCine = doc.querySelector('#btn-cine');
+  assert.match(btnCine.textContent, /Ciné : on/, 'les cinématiques doivent être actives par défaut');
+  click(doc, '#btn-cine');
+  assert.match(btnCine.textContent, /Ciné : off/, 'le bouton doit indiquer l’état « off »');
+  assert.ok(btnCine.classList.contains('is-off'), 'classe is-off absente');
+
+  click(doc, '[data-mode="duel"]');
+  await waitFor(dom, () => doc.querySelector('#screen-select').classList.contains('is-active'), 5000, 'sélection');
+  const pick = (id) => {
+    const card = Array.from(doc.querySelectorAll('#brand-grid .bcard')).find((c) => c.dataset.brand === id);
+    assert.ok(card, 'carte manquante : ' + id);
+    card.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  };
+  pick('apple');
+  await waitFor(dom, () => doc.querySelector('#select-title').textContent.includes('adversaire'), 5000, 'étape 2');
+  pick('microsoft');
+  await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 5000, 'arène');
+
+  // La préférence est conservée pour les écrans suivants
+  assert.match(doc.querySelector('#btn-cine').textContent, /Ciné : off/, 'préférence non conservée');
+
+  const btnUlt = doc.querySelector('#btn-ultimate');
+  let guard = 20;
+  while (guard-- > 0) {
+    await waitFor(dom, () => !doc.querySelector('#btn-attack').disabled ||
+      doc.querySelector('#result-overlay').classList.contains('is-open'), 60000, 'tour du joueur');
+    if (doc.querySelector('#result-overlay').classList.contains('is-open')) break;
+    if (!btnUlt.disabled) break;
+    click(doc, '#btn-attack');
+    await tick(300);
+  }
+  assert.strictEqual(btnUlt.disabled, false, 'l’ultime devrait être disponible à 100 %');
+
+  doc.querySelector('#announce').innerHTML = '';
+  click(doc, '#btn-ultimate');
+  await waitFor(dom, () => doc.querySelector('#cine').classList.contains('is-open'), 20000, 'cinématique courte');
+
+  const cine = doc.querySelector('#cine');
+  assert.ok(cine.classList.contains('is-short'), 'la cinématique doit être en mode court');
+  assert.strictEqual(doc.querySelectorAll('#cine-fx .up').length, 0, 'aucune particule en mode court');
+  assert.strictEqual(doc.querySelector('#cine-kicker').textContent, 'ULTIMATE !', 'bandeau ULTIMATE absent');
+  assert.strictEqual(doc.querySelector('#cine-ult').textContent, 'Reality Distortion');
+
+  // Le mode court referme la cinématique bien plus vite que le mode long
+  const started = Date.now();
+  await waitFor(dom, () => !doc.querySelector('#cine').classList.contains('is-open'), 20000, 'fin de la cinématique courte');
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1200, 'cinématique courte trop longue : ' + elapsed + ' ms');
+  assert.ok(!doc.body.classList.contains('is-ult-focus'), 'l’arène ne doit plus être assombrie');
+
+  // Les dégâts et la bannière arrivent malgré tout
+  await waitFor(dom, () => doc.querySelector('#announce .announce__text--banner'), 30000, 'bannière en mode court');
+  assert.match(doc.querySelector('#announce .announce__text--banner').textContent, /CRITICAL|K\.O\.|BLOCK|DODGE/);
+  await waitFor(dom, () => doc.querySelector('#history-list .hrow--ult.hrow--left'), 30000, 'ligne d’ultime');
+  assert.ok(parseInt(doc.querySelector('#hp-now-right').textContent, 10) < 445, 'dégâts non appliqués');
 
   await tick(200);
   dom.window.close();

@@ -21,11 +21,27 @@
     speed: 1,
     tournament: null,        // { order, index, wins }
     shownRows: new Set(),
-    historyFilter: 'all'     // all | ult | crit | heal
+    historyFilter: 'all',    // all | ult | crit | heal
+    cinematics: true         // cinématiques d'ultime longues (bouton 🎬)
   };
 
   const META_KEY = 'guerreDesMarques.meta.v1';
+  const PREFS_KEY = 'guerreDesMarques.prefs.v1';
   let meta = loadMeta();
+
+  /* Préférences d'interface (indépendantes des statistiques de jeu) */
+  function loadPrefs() {
+    try {
+      const raw = localStorage.getItem(PREFS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p && typeof p.cinematics === 'boolean') state.cinematics = p.cinematics;
+      }
+    } catch (e) { /* stockage indisponible */ }
+  }
+  function savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify({ cinematics: state.cinematics })); } catch (e) { /* ignore */ }
+  }
 
   function loadMeta() {
     try {
@@ -229,6 +245,11 @@
     $('#ultimate-cost').textContent = Engine.CFG.ULT_MAX;
     $('#announce').innerHTML = '';
     $('#ko-overlay').classList.remove('is-open');
+    // sécurité : plus aucune trace de la cinématique précédente
+    $('#cine').classList.remove('is-open');
+    $('#cine').setAttribute('aria-hidden', 'true');
+    $('#cine-fx').innerHTML = '';
+    document.body.classList.remove('is-ult-focus');
     closeResult();
     renderBracket();
     refreshAll();
@@ -327,6 +348,16 @@
     $('#fighter-' + side).classList.toggle('is-shielded', f.shield > 0);
   }
 
+  function paintCineBtn() {
+    const btn = $('#btn-cine');
+    if (!btn) return;
+    btn.textContent = '🎬 Ciné : ' + (state.cinematics ? 'on' : 'off');
+    btn.classList.toggle('is-off', !state.cinematics);
+    btn.title = state.cinematics
+      ? 'Cinématiques d’ultime longues (cliquer pour raccourcir)'
+      : 'Cinématiques d’ultime courtes (cliquer pour les réactiver)';
+  }
+
   function updateActions() {
     const playable = isPlayerTurn() && !state.busy && state.battle && state.battle.active;
     $('#btn-attack').disabled = !playable;
@@ -358,15 +389,17 @@
   }
 
   /* ------------------------- Effets ------------------------- */
-  function announce(text, variant) {
+  /* `banner` ajoute le style « slam » des bannières de résultat d'ultime */
+  function announce(text, variant, life, banner) {
     return new Promise(function (resolve) {
       const box = $('#announce');
       const el = document.createElement('div');
-      el.className = 'announce__text announce__text--' + (variant || 'round');
+      el.className = 'announce__text announce__text--' + (variant || 'round') +
+        (banner ? ' announce__text--banner' : '');
       el.textContent = text;
       box.appendChild(el);
-      const life = 850 / state.speed;
-      setTimeout(function () { el.remove(); resolve(); }, life);
+      const ms = (life || 850) / state.speed;
+      setTimeout(function () { el.remove(); resolve(); }, ms);
     });
   }
 
@@ -430,52 +463,103 @@
     }, (hard ? 800 : 550) / state.speed);
   }
 
-  /* --------- Cinématique d'ultime --------- */
+  /* --------- Cinématique d'ultime ---------
+     Signature visuelle de chaque marque : type de particules, couleurs et
+     ampleur. Le gameplay (dégâts, statistiques) n'est jamais touché ici. */
+  const ULT_FX = {
+    distort:   { particle: 'shard',  count: 22 },
+    storm:     { particle: 'meteor', count: 18 },
+    charge:    { particle: 'bolt',   count: 14 },
+    harmony:   { particle: 'wave',   count: 6 },
+    gemini:    { particle: 'dot',    count: 28 },
+    overdrive: { particle: 'tile',   count: 12 },
+    rage:      { particle: 'glitch', count: 9 },
+    star:      { particle: 'star',   count: 20 },
+    fury:      { particle: 'ember',  count: 24 },
+    rtx:       { particle: 'ray',    count: 16 },
+    core:      { particle: 'hex',    count: 12 }
+  };
+
+  /* Particules projetées aux couleurs de la marque */
+  function ultParticles(fxKey, colors) {
+    const host = $('#cine-fx');
+    host.innerHTML = '';
+    const cfg = ULT_FX[fxKey] || ULT_FX.distort;
+    for (let i = 0; i < cfg.count; i++) {
+      const p = document.createElement('i');
+      p.className = 'up up--' + cfg.particle;
+      const angle = (Math.PI * 2 * i) / cfg.count + Math.random() * 0.35;
+      const dist = 160 + Math.random() * 380;
+      p.style.setProperty('--dx', Math.round(Math.cos(angle) * dist) + 'px');
+      p.style.setProperty('--dy', Math.round(Math.sin(angle) * dist) + 'px');
+      p.style.setProperty('--rot', Math.round(Math.random() * 540 - 270) + 'deg');
+      p.style.setProperty('--x', (Math.random() * 100).toFixed(1) + 'vw');
+      p.style.setProperty('--y', (Math.random() * 100).toFixed(1) + 'vh');
+      p.style.setProperty('--d', (Math.random() * 0.45).toFixed(2) + 's');
+      p.style.setProperty('--s', (0.6 + Math.random() * 0.9).toFixed(2));
+      if (cfg.particle === 'wave') p.style.color = i % 2 ? colors[0] : (colors[1] || colors[0]);
+      p.style.background = i % 3 === 1 ? (colors[1] || colors[0]) : colors[0];
+      host.appendChild(p);
+    }
+  }
+
+  /* Bannière de résultat affichée après les dégâts d'un ultime */
+  const RESULT_BANNER = { ko: 'K.O. !', critical: 'CRITICAL !', block: 'BLOCK !', dodge: 'DODGE !' };
+
+  function resultBanner(kind) {
+    const text = RESULT_BANNER[kind];
+    if (!text) return;
+    announce(text, kind, 1250, true);
+    if (kind === 'ko') SFX.play('ko');
+    else if (kind === 'critical') SFX.play('crit');
+    else SFX.play('block');
+  }
+
   async function playCinematic(ev) {
+    const long = state.cinematics !== false;
     const cine = $('#cine');
     const f = state.battle.fighters[ev.side];
     const colors = ev.colors || ['#6c8cff', '#b06cff'];
 
+    /* --- Préparation du plan --- */
     cine.style.setProperty('--cine-a', colors[0]);
     cine.style.setProperty('--cine-b', colors[1]);
     cine.style.setProperty('--cine-x', ev.side === 'left' ? '24%' : '76%');
+    cine.style.setProperty('--from-x', ev.side === 'left' ? '-32vw' : '32vw');
     cine.dataset.fx = ev.fx || 'distort';
     $('#cine-mono').textContent = f.brand.mono;
-    $('#cine-mono').style.color = 'transparent';
     $('#cine-brand').textContent = f.name;
     $('#cine-ult').textContent = ev.name;
+    $('#cine-kicker').textContent = 'ULTIMATE !';
     $('#cine-phrase').textContent = ev.phrase || ev.desc || '';
+    if (long) ultParticles(ev.fx || 'distort', colors);
+    else $('#cine-fx').innerHTML = '';
 
-    // Éclats lumineux projetés depuis le centre
-    const shards = $('#cine-shards');
-    shards.innerHTML = '';
-    for (let i = 0; i < 20; i++) {
-      const s = document.createElement('i');
-      const angle = (Math.PI * 2 * i) / 20 + Math.random() * 0.3;
-      const dist = 220 + Math.random() * 420;
-      s.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
-      s.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
-      s.style.setProperty('--rot', (angle * 180 / Math.PI).toFixed(1) + 'deg');
-      s.style.animationDelay = (Math.random() * 0.25).toFixed(2) + 's';
-      shards.appendChild(s);
-    }
-
-    cine.classList.remove('is-open');
-    void cine.offsetWidth;
-    cine.classList.add('is-open');
-    cine.setAttribute('aria-hidden', 'false');
+    /* --- 1. L'arène s'assombrit et se zoome, la marque monte en puissance --- */
+    document.body.classList.add('is-ult-focus');
     restartAnim($('#fighter-' + ev.side), 'is-charging');
-    SFX.play('ultimate');
-    quakeScreen(true);
-    sparks(ev.side, 26, colors[1]);
     setTicker('✦ <b>' + esc(f.name) + '</b> déclenche son ULTIME : « ' + esc(ev.name) + ' » — ' + esc(ev.desc || ''));
 
-    await wait(1550);
+    /* --- 2. Zoom sur la marque + ULTIMATE ! + nom du pouvoir --- */
+    cine.classList.toggle('is-short', !long);
+    cine.classList.remove('is-open');
+    void cine.offsetWidth;                      // relance les animations
+    cine.classList.add('is-open');
+    cine.setAttribute('aria-hidden', 'false');
+    SFX.play('ultimate');
+    quakeScreen(true);
+    sparks(ev.side, long ? 26 : 10, colors[1]);
+
+    /* --- 3. On laisse la cinématique se jouer ; les dégâts sont appliqués
+             ensuite, quand `playEvents` traitera l'événement `strike` --- */
+    await wait(long ? 1780 : 430);
+
     cine.classList.remove('is-open');
     cine.setAttribute('aria-hidden', 'true');
-    shards.innerHTML = '';
-    announce('ULTIME !', 'ult');
-    await wait(200);
+    $('#cine-fx').innerHTML = '';
+    document.body.classList.remove('is-ult-focus');
+    if (!long) announce('ULTIMATE !', 'ult', 700);
+    await wait(long ? 220 : 90);
   }
 
   function confetti(count) {
@@ -492,6 +576,8 @@
       setTimeout(function () { c.remove(); }, 3800);
     }
   }
+
+  /* ------------------------- Historique ------------------------- */
 
   /* ------------------------- Historique ------------------------- */
   function nextHistoryRow(side) {
@@ -669,6 +755,7 @@
       case 'strike': {
         const attacker = $('#fighter-' + ev.side);
         const targetSide = ev.target;
+        const critAny = ev.hits.some(function (h) { return h.crit; });
         restartAnim(attacker, 'is-attacking');
         SFX.play(ev.ultimate ? 'ultimate' : 'swing');
         if (ev.ultimate) quakeScreen(true);
@@ -705,7 +792,8 @@
               flashArena();
               shakeArena();
               quakeScreen(!!ev.ultimate);
-              announce(ev.ultimate ? 'ULTIME !' : 'CRITIQUE !', ev.ultimate ? 'ult' : 'crit');
+              // un ultime garde sa bannière de résultat pour la fin de la frappe
+              if (!ev.ultimate) announce('CRITIQUE !', 'crit');
             } else {
               SFX.play('hit');
               ring(targetSide, false);
@@ -729,6 +817,15 @@
         if (row) renderHistoryRow(row);
         if (battle.logs.length) pushLog(battle.logs[battle.logs.length - 1]);
         refreshAll();
+
+        // Bannière de résultat d'un ultime (les dégâts sont déjà appliqués)
+        if (ev.ultimate) {
+          if (ev.ko) resultBanner('ko');
+          else if (ev.allBlocked) resultBanner('block');
+          else if (ev.allDodged) resultBanner('dodge');
+          else if (critAny) resultBanner('critical');
+          await wait(260);
+        }
         break;
       }
 
@@ -1115,6 +1212,14 @@
       maybeAiTurn(300);
     });
 
+    // Cinématiques d'ultime longues / courtes
+    $('#btn-cine').addEventListener('click', function () {
+      state.cinematics = !state.cinematics;
+      savePrefs();
+      paintCineBtn();
+      SFX.play('click');
+    });
+
     $('#btn-sound').addEventListener('click', function () {
       const on = SFX.toggle();
       this.textContent = on ? '🔊 Son' : '🔇 Muet';
@@ -1172,8 +1277,10 @@
   /* ------------------------- Boot ------------------------- */
   document.addEventListener('DOMContentLoaded', function () {
     document.documentElement.style.setProperty('--speed', '1');
+    loadPrefs();
     renderMenuRoster();
     bindUi();
+    paintCineBtn();
     $('#btn-auto').classList.add('is-off');
   });
 })();
