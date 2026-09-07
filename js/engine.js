@@ -33,7 +33,15 @@
     ENERGY_HIT: 9,           // énergie gagnée en encaissant
     ENERGY_DEFEND: 20,       // énergie gagnée en se défendant
     ENERGY_ROUND: 4,         // énergie passive par round
-    MAX_ROUNDS: 40           // mort subite au-delà
+    ULT_MAX: 100,            // jauge d'ultime (en %)
+    ULT_ATTACK: 14,          // ultime gagné en attaquant
+    ULT_HIT: 9,              // ultime gagné en encaissant
+    ULT_DEFEND: 12,          // ultime gagné en se défendant
+    ULT_ROUND: 4,            // ultime passif par round
+    ULT_COOLDOWN: 2,         // tours de recharge après un ultime (jauge bloquée)
+    MAX_ROUNDS: 40,          // mort subite au-delà
+    LEVEL_MAX: 100,          // niveau maximum d'une marque (progression)
+    LEVEL_STAT_GROWTH: 0.2   // +20 % de statistiques entre le niveau 1 et 100
   };
 
   const clamp = function (v, min, max) { return v < min ? min : (v > max ? max : v); };
@@ -79,23 +87,50 @@
 
   /* ------------------- Combattants ------------------- */
 
+  /* Croissance des statistiques avec le niveau de la marque (progression).
+     Sans niveau fourni (combats de test, IA du tournoi…) : aucun changement. */
+  function levelGrowth(level) {
+    const l = clamp(level || 1, 1, CFG.LEVEL_MAX);
+    return 1 + (CFG.LEVEL_STAT_GROWTH * (l - 1)) / (CFG.LEVEL_MAX - 1);
+  }
+
+  /* Multiplicateur appliqué à une statistique :
+     `opts.scale` reste global, `opts.statMult` permet d'ajuster chaque axe
+     (utilisé par le Boss Rush pour gonfler les PV sans dérégler l'attaque). */
+  function statScale(opts, key) {
+    const base = (opts.scale || 1) * levelGrowth(opts.level);
+    const m = opts.statMult || {};
+    return base * (m[key] !== undefined ? m[key] : 1);
+  }
+
   function createFighter(brandOrId, side, opts) {
     const brand = typeof brandOrId === 'string' ? getBrand(brandOrId) : brandOrId;
     if (!brand) throw new Error('Marque inconnue : ' + brandOrId);
     opts = opts || {};
-    const scale = opts.scale || 1;
     return {
       side: side,                                   // 'left' | 'right'
       brand: brand,
       name: brand.name,
-      maxHp: Math.round(brand.stats.pv * scale),
-      hp: Math.round(brand.stats.pv * scale),
+      maxHp: Math.round(brand.stats.pv * statScale(opts, 'pv')),
+      hp: Math.round(brand.stats.pv * statScale(opts, 'pv')),
       base: {
-        attaque: Math.round(brand.stats.attaque * scale),
-        defense: Math.round(brand.stats.defense * scale),
-        vitesse: Math.round(brand.stats.vitesse * scale)
+        attaque: Math.round(brand.stats.attaque * statScale(opts, 'attaque')),
+        defense: Math.round(brand.stats.defense * statScale(opts, 'defense')),
+        vitesse: Math.round(brand.stats.vitesse * statScale(opts, 'vitesse'))
+      },
+      boss: !!brand.boss,       // boss du Boss Rush
+      phase: 0,                 // phase courante (0 = phase d'origine)
+      baseBrand: brand,         // fiche d'origine, avant transformation de phase
+      passiveStacks: 0,
+      statMult: {               // multiplicateurs appliqués (niveau + difficulté)
+        pv: statScale(opts, 'pv'), attaque: statScale(opts, 'attaque'),
+        defense: statScale(opts, 'defense'), vitesse: statScale(opts, 'vitesse')
       },
       energy: 0,
+      level: Math.max(1, Math.min(CFG.LEVEL_MAX, Math.round(opts.level || 1))),
+      ult: 0,             // jauge d'ultime (0 → 100)
+      ultCooldown: 0,     // tours de recharge restants
+      ultUsed: 0,         // nombre d'ultimes déjà lancés
       buffs: [],          // { stat, mult, turns, label, icon }
       shield: 0,          // tours d'invulnérabilité
       stun: 0,            // tours d'étourdissement
@@ -112,8 +147,21 @@
     if (f.energy !== before) events.push({ t: 'energy', side: f.side, delta: f.energy - before, total: f.energy });
   }
 
+  /* Jauge d'ultime : bloquée pendant la recharge qui suit un ultime. */
+  function gainUlt(f, amount, events) {
+    if (amount <= 0 || f.ultCooldown > 0) return 0;
+    const before = f.ult;
+    f.ult = clamp(f.ult + amount, 0, CFG.ULT_MAX);
+    if (f.ult !== before) events.push({ t: 'ult', side: f.side, delta: f.ult - before, total: f.ult });
+    return f.ult - before;
+  }
+
   function canUseSpecial(f) {
     return f.energy >= f.brand.special.cost && f.stun <= 0;
+  }
+
+  function canUseUltimate(f) {
+    return !!f.brand.ultimate && f.ult >= CFG.ULT_MAX && f.stun <= 0 && f.ultCooldown <= 0;
   }
 
   function addBuff(f, battle, buff, events) {
@@ -144,7 +192,11 @@
       history: [],   // historique détaillé des attaques
       logs: [],      // journal texte
       rng: opts.rng || Math.random,
-      stats: { crits: 0, dodges: 0, specials: 0, maxDamage: 0 }
+      stats: {
+        crits: 0, dodges: 0, specials: 0, ultimates: 0, maxDamage: 0,
+        damage: { left: 0, right: 0 },   // dégâts cumulés par camp
+        maxHit: { left: 0, right: 0 }    // plus gros coup porté par camp
+      }
     };
     battle.fighters = { left: battle.a, right: battle.b };
     newRound(battle, true);
@@ -180,25 +232,44 @@
 
   function recordHistory(battle, entry) {
     entry.round = battle.round;
+    entry.index = battle.history.length + 1;
+    if (!entry.effects) entry.effects = [];
     entry.hpLeft = { left: battle.a.hp, right: battle.b.hp };
+    entry.hpPct = {
+      left: Math.round(battle.a.hp / battle.a.maxHp * 100),
+      right: Math.round(battle.b.hp / battle.b.maxHp * 100)
+    };
+    entry.ultAfter = { left: battle.a.ult, right: battle.b.ult };
     battle.history.push(entry);
     return entry;
+  }
+
+  /* Résumé lisible d'une série d'impacts : « 24 + 31 + 0 » */
+  function hitDetail(hits) {
+    if (!hits || hits.length <= 1) return '';
+    return hits.map(function (h) {
+      if (h.dodged) return 'esquivé';
+      if (h.blocked) return 'bloqué';
+      return String(h.damage);
+    }).join(' + ');
   }
 
   /* --- Résolution d'une frappe (1 à N impacts) --- */
   function strike(battle, attacker, defender, params) {
     params = params || {};
+    const events0 = [];      // événements annexes (renvoi de dégâts…)
     const hits = [];
     let total = 0;
     const count = params.hits || 1;
     const special = params.special || null;
-    const dodge = dodgeChance(attacker, defender);
+    const ultimate = params.ultimate || null;
+    const dodge = params.cannotDodge ? 0 : dodgeChance(attacker, defender);
 
     for (let i = 0; i < count; i++) {
       if (defender.hp <= 0) break;
 
-      // Esquive
-      if (battle.rng() < dodge) {
+      // Esquive (un ultime ne peut pas être esquivé)
+      if (!params.cannotDodge && battle.rng() < dodge) {
         hits.push({ damage: 0, crit: false, dodged: true, blocked: false, lethal: false });
         battle.stats.dodges++;
         continue;
@@ -232,6 +303,21 @@
       const lethal = defender.hp <= 0;
       hits.push({ damage: dmg, crit: isCrit, dodged: false, blocked: blocked, lethal: lethal });
 
+      // Renvoi de dégâts (boss « miroir ») : le défenseur répercute une part
+      if (!blocked && defender.mirror && dmg > 0 && attacker.hp > 0) {
+        const back = Math.max(1, Math.round(dmg * defender.mirror));
+        attacker.hp = Math.max(0, attacker.hp - back);
+        hits[hits.length - 1].mirror = back;
+        events0.push({ t: 'mirror', side: defender.side, target: attacker.side, amount: back });
+        log(battle, '🪞 ' + defender.name + ' renvoie ' + back + ' dégâts à ' + attacker.name + '.', 'crit');
+        if (attacker.hp <= 0) {
+          battle.active = false;
+          battle.winner = defender;
+          battle.endReason = 'ko';
+          log(battle, '☠️ ' + attacker.name + ' s’effondre sous son propre coup !', 'ko');
+        }
+      }
+
       if (params.healRatio) {
         const healed = applyHeal(battle, attacker, Math.round(dmg * params.healRatio));
         if (healed > 0) hits[hits.length - 1].heal = healed;
@@ -241,37 +327,50 @@
     }
 
     if (total > battle.stats.maxDamage) battle.stats.maxDamage = total;
+    if (total > battle.stats.maxHit[attacker.side]) battle.stats.maxHit[attacker.side] = total;
+    battle.stats.damage[attacker.side] += total;
     if (special) battle.stats.specials++;
 
-    // Énergie : l'attaquant frappe, la défense encaisse
+    // Énergie & jauge d'ultime : l'attaquant frappe, la défense encaisse
     gainEnergy(attacker, CFG.ENERGY_ATTACK, []);
     if (total > 0) gainEnergy(defender, CFG.ENERGY_HIT, []);
+    gainUlt(attacker, CFG.ULT_ATTACK, []);
+    if (total > 0) gainUlt(defender, CFG.ULT_HIT, []);
 
     const event = {
       t: 'strike',
       side: attacker.side,
       target: defender.side,
       special: special,
+      ultimate: ultimate,
       hits: hits,
       total: total,
       allDodged: hits.length > 0 && hits.every(function (h) { return h.dodged; }),
       allBlocked: hits.length > 0 && hits.every(function (h) { return h.blocked; })
     };
 
+    event.side_events = events0;
+
     // Historique des attaques
     const critAny = hits.some(function (h) { return h.crit; });
-    recordHistory(battle, {
+    const critCount = hits.filter(function (h) { return h.crit; }).length;
+    const dodgeCount = hits.filter(function (h) { return h.dodged; }).length;
+    event.row = recordHistory(battle, {
       actor: attacker.name,
       actorSide: attacker.side,
       target: defender.name,
-      action: special ? special.name : 'Attaque',
-      actionKind: special ? 'special' : 'attack',
+      action: ultimate ? ultimate.name : (special ? special.name : 'Attaque'),
+      actionKind: ultimate ? 'ultimate' : (special ? 'special' : 'attack'),
       damage: total,
       hits: hits.length,
       crit: critAny,
+      critCount: critCount,
+      dodgeCount: dodgeCount,
+      detail: hitDetail(hits),
       dodged: event.allDodged,
       blocked: event.allBlocked,
       heal: hits.reduce(function (s, h) { return s + (h.heal || 0); }, 0),
+      effects: [],
       result: total === 0
         ? (event.allDodged ? 'Esquivé' : 'Bloqué')
         : (critAny ? 'CRITIQUE' : 'Touché')
@@ -283,6 +382,8 @@
       log(battle, who + ' attaque… ' + defender.name + ' esquive !', 'dodge');
     } else if (event.allBlocked) {
       log(battle, who + ' frappe le bouclier de ' + defender.name + ' — aucun dégât.', 'block');
+    } else if (ultimate) {
+      log(battle, '✦ ULTIME ! ' + who + ' lance « ' + ultimate.name + ' » → ' + total + ' dégâts', 'ultimate');
     } else if (special) {
       log(battle, '⚡ ' + who + ' lance « ' + special.name + ' » → ' + total + ' dégâts' + (critAny ? ' (CRITIQUE !)' : ''), 'special');
     } else if (critAny) {
@@ -307,17 +408,175 @@
     return healed;
   }
 
+  /* --- Boss : passifs de début de tour --- */
+
+  /* Renvoie une action forcée ('overload') ou null.
+     Types gérés :
+       rampage → l'attaque monte à chaque tour
+       evade   → vitesse accrue (donc plus d'esquives)
+       siphon  → régénération passive
+       mirror  → prépare le renvoi d'une part des dégâts subis
+       overload→ frappe surchargée tous les `every` tours */
+  function applyPassive(battle, f, events) {
+    const p = f.brand.passive;
+    if (!p) return null;
+    const foe = opponentOf(battle, f);
+
+    if (p.type === 'rampage') {
+      const stacks = Math.min(p.maxStacks || 10, (f.passiveStacks || 0) + 1);
+      f.passiveStacks = stacks;
+      const mult = 1 + (p.perStack || 0.08) * stacks;
+      // libellé constant : le buff se remplace au lieu de s'empiler
+      addBuff(f, battle, {
+        stat: 'attaque', mult: mult, turns: 2,
+        label: p.name || 'Montée en puissance', icon: p.icon || '🔥'
+      }, events);
+      events.push({ t: 'bossPassive', side: f.side, kind: 'rampage', stacks: stacks, label: p.name || 'Montée en puissance', icon: p.icon || '🔥' });
+      log(battle, (p.icon || '🔥') + ' ' + f.name + ' gagne en puissance : ' + Math.round((mult - 1) * 100) + ' % d’attaque.', 'buff');
+      return null;
+    }
+
+    if (p.type === 'evade') {
+      const mult = p.spdMult || 1.5;
+      addBuff(f, battle, {
+        stat: 'vitesse', mult: mult, turns: 2,
+        label: '+' + Math.round((mult - 1) * 100) + ' % vitesse', icon: p.icon || '🌌'
+      }, events);
+      events.push({ t: 'bossPassive', side: f.side, kind: 'evade', label: p.name || 'Déphasage', icon: p.icon || '🌌' });
+      return null;
+    }
+
+    if (p.type === 'siphon') {
+      const healed = applyHeal(battle, f, Math.round(f.maxHp * (p.healRatio || 0.01)));
+      events.push({ t: 'bossPassive', side: f.side, kind: 'siphon', heal: healed, label: p.name || 'Régénération', icon: p.icon || '💚' });
+      if (healed > 0) log(battle, '💚 ' + f.name + ' se régénère de ' + healed + ' PV.', 'heal');
+      return null;
+    }
+
+    if (p.type === 'mirror') {
+      f.mirror = p.reflect || 0.15;      // lu par strike() via `defender.mirror`
+      events.push({ t: 'bossPassive', side: f.side, kind: 'mirror', label: p.name || 'Renvoi', icon: p.icon || '🪞', reflect: f.mirror });
+      return null;
+    }
+
+    if (p.type === 'overload') {
+      f.passiveStacks = (f.passiveStacks || 0) + 1;
+      if (f.passiveStacks % (p.every || 3) === 0) return 'overload';
+      return null;
+    }
+    return null;
+  }
+
+  /* --- Boss : transformations de phase --- */
+
+  /* Construit la fiche du boss pour une phase donnée.
+     `copy: true` → le boss vole le pouvoir spécial et l'ultime de l'adversaire. */
+  function phaseBrand(boss, phase, foeBrand) {
+    const next = {
+      id: boss.id,
+      name: phase.name || boss.name,
+      mono: phase.mono || boss.mono,
+      cat: boss.cat,
+      boss: true,
+      order: boss.order,
+      secret: boss.secret,
+      icon: boss.icon,
+      tagline: boss.tagline,
+      colors: phase.colors || boss.colors,
+      accent: phase.accent || boss.accent,
+      glow: phase.glow || boss.glow,
+      fx: boss.fx,
+      music: boss.music,
+      intro: boss.intro,
+      reward: boss.reward,
+      special: Object.assign({}, boss.special, phase.special || {}),
+      ultimate: Object.assign({}, boss.ultimate, phase.ultimate || {}),
+      passive: phase.passive || boss.passive,
+      phases: boss.phases,
+      power: boss.power,
+      powerDesc: boss.powerDesc
+    };
+    const src = phase.copy && foeBrand ? foeBrand : boss;
+    const m = phase.stats || {};
+    next.stats = {
+      pv: boss.stats.pv,
+      attaque: Math.round(src.stats.attaque * (m.attaque || 1)),
+      defense: Math.round(src.stats.defense * (m.defense || 1)),
+      vitesse: Math.round(src.stats.vitesse * (m.vitesse || 1))
+    };
+    if (phase.copy && foeBrand) {
+      next.special = Object.assign({}, foeBrand.special);
+      next.ultimate = Object.assign({}, foeBrand.ultimate);
+      next.copiedFrom = foeBrand.name;
+    }
+    return next;
+  }
+
+  function checkPhases(battle, events) {
+    ['left', 'right'].forEach(function (side) {
+      const f = battle.fighters[side];
+      const phases = (f.baseBrand && f.baseBrand.phases) || f.brand.phases;
+      if (!phases || !phases.length) return;
+      if (f.hp <= 0) return;
+      const ratio = f.hp / f.maxHp;
+      let idx = f.phase;
+      while (idx < phases.length && ratio <= phases[idx].at) idx++;
+      if (idx <= f.phase) return;
+
+      const phase = phases[idx - 1];
+      const foe = opponentOf(battle, f);
+      const hpRatio = f.hp / f.maxHp;
+
+      f.brand = phaseBrand(f.baseBrand, phase, foe.brand);
+      f.name = f.brand.name;
+      f.phase = idx;
+      f.passiveStacks = 0;
+      f.buffs = [];                 // les buffs de la phase précédente disparaissent
+      f.critGuaranteed = 0;
+      f.shield = 0;
+      f.stun = 0;
+      f.energy = f.brand.special ? Math.min(f.energy, f.brand.special.cost - 1) : 0;
+      f.ult = Math.min(CFG.ULT_MAX, f.ult + 40);   // la nouvelle phase arrive chargée
+      f.maxHp = Math.round(f.brand.stats.pv * f.statMult.pv);
+      f.hp = Math.max(1, Math.min(f.maxHp, Math.round(f.maxHp * hpRatio)));
+      f.base = {
+        attaque: Math.round(f.brand.stats.attaque * f.statMult.attaque),
+        defense: Math.round(f.brand.stats.defense * f.statMult.defense),
+        vitesse: Math.round(f.brand.stats.vitesse * f.statMult.vitesse)
+      };
+
+      events.push({
+        t: 'bossPhase',
+        side: f.side,
+        phase: idx,
+        label: phase.label || ('PHASE ' + (idx + 1) + ' !'),
+        name: f.brand.name,
+        mono: f.brand.mono,
+        colors: f.brand.colors,
+        accent: f.brand.accent,
+        glow: f.brand.glow,
+        copied: !!phase.copy,
+        copiedFrom: f.brand.copiedFrom || null,
+        special: f.brand.special,
+        ultimate: f.brand.ultimate
+      });
+      log(battle, '☠️ ' + (phase.label || 'PHASE ' + (idx + 1)) + ' ' + f.brand.name + ' change de forme !', 'boss');
+    });
+    return events;
+  }
+
   /* --- Actions --- */
 
   function doDefend(battle, f, events) {
     f.defending = true;
     gainEnergy(f, CFG.ENERGY_DEFEND, events);
+    gainUlt(f, CFG.ULT_DEFEND, events);
     const regen = applyHeal(battle, f, Math.round(f.maxHp * 0.03));
     events.push({ t: 'defend', side: f.side, regen: regen });
     recordHistory(battle, {
       actor: f.name, actorSide: f.side, target: opponentOf(battle, f).name,
       action: 'Défense', actionKind: 'defend', damage: 0, hits: 0,
-      crit: false, dodged: false, blocked: false, heal: regen, result: 'Garde'
+      crit: false, dodged: false, blocked: false, heal: regen, effects: [], result: 'Garde'
     });
     log(battle, '🛡️ ' + f.name + ' se met en garde (-55 % de dégâts encaissés)' + (regen ? ' et récupère ' + regen + ' PV.' : '.'), 'defend');
   }
@@ -442,6 +701,142 @@
     }
   }
 
+  /* --- Ultime : cinématique + effet unique par marque --- */
+  function doUltimate(battle, f, foe, events) {
+    const ult = f.brand.ultimate;
+    const fx = (ult && ult.effects) || {};
+    const effects = [];
+
+    f.ult = 0;
+    f.ultCooldown = CFG.ULT_COOLDOWN;
+    f.ultUsed++;
+    battle.stats.ultimates++;
+
+    events.push({
+      t: 'ultimateCast', side: f.side, name: ult.name, icon: ult.icon,
+      phrase: ult.phrase, desc: ult.desc, fx: ult.fx,
+      colors: f.brand.colors, accent: f.brand.accent, glow: f.brand.glow
+    });
+    log(battle, '✦ ULTIME ! ' + f.name + ' déclenche « ' + ult.name + ' » !', 'ultimate');
+
+    /* 1. Bris de bouclier & dissipation des buffs adverses */
+    if (fx.breakShield && foe.shield > 0) {
+      foe.shield = 0;
+      events.push({ t: 'shieldBreak', target: foe.side });
+      effects.push('Bouclier brisé');
+      log(battle, '💥 L’invulnérabilité de ' + foe.name + ' vole en éclats !', 'ultimate');
+    }
+    if (fx.stripBuffs && (foe.buffs.length > 0 || foe.critGuaranteed > 0)) {
+      const n = foe.buffs.length + (foe.critGuaranteed > 0 ? 1 : 0);
+      foe.buffs = [];
+      foe.critGuaranteed = 0;
+      events.push({ t: 'strip', target: foe.side, count: n });
+      effects.push(n + ' effet' + (n > 1 ? 's' : '') + ' dissipé' + (n > 1 ? 's' : ''));
+      log(battle, '🌀 Les améliorations de ' + foe.name + ' sont dissipées.', 'ultimate');
+    }
+
+    /* 2. Frappe (un ultime ne peut être ni esquivé, ni atténué par la garde) */
+    let ev = null;
+    if (fx.mult) {
+      foe.defending = false;
+      ev = strike(battle, f, foe, {
+        mult: fx.mult,
+        hits: fx.hits || 1,
+        pierce: fx.pierce || 0,
+        guaranteedCrit: !!fx.crit,
+        healRatio: fx.healRatio || 0,
+        cannotDodge: true,
+        ultimate: ult
+      });
+      events.push(ev);
+    }
+
+    /* 3. Contrôle : étourdissement */
+    if (fx.stunTurns && battle.active) {
+      foe.stun = Math.max(foe.stun, fx.stunTurns);
+      events.push({ t: 'stunApplied', target: foe.side, turns: fx.stunTurns });
+      effects.push('Étourdi ' + fx.stunTurns + ' tours');
+      recordHistory(battle, {
+        actor: f.name, actorSide: f.side, target: foe.name, action: ult.name + ' (contrôle)',
+        actionKind: 'control', damage: 0, hits: 0, crit: false, dodged: false, blocked: false,
+        heal: 0, result: 'Étourdi ' + fx.stunTurns + ' tours'
+      });
+      log(battle, '⚡ ' + foe.name + ' est paralysé ' + fx.stunTurns + ' tours !', 'ultimate');
+    }
+
+    /* 4. Soin & invulnérabilité */
+    if (fx.heal) {
+      const healed = applyHeal(battle, f, Math.round(f.maxHp * fx.heal));
+      if (healed > 0) {
+        events.push({ t: 'heal', side: f.side, amount: healed, label: ult.name });
+        effects.push('+' + healed + ' PV');
+        log(battle, '💚 ' + f.name + ' récupère ' + healed + ' PV.', 'heal');
+      }
+    }
+    if (fx.shieldTurns) {
+      f.shield = Math.max(f.shield, fx.shieldTurns);
+      f.shieldBornTurn = battle.turnNumber;
+      events.push({ t: 'shield', side: f.side, turns: fx.shieldTurns });
+      effects.push('Invulnérable ' + fx.shieldTurns + ' tours');
+      log(battle, '⭐ ' + f.name + ' devient invulnérable ' + fx.shieldTurns + ' tours !', 'buff');
+    }
+
+    /* 5. Buffs sur soi / affaiblissement de l'adversaire */
+    (fx.buffs || []).forEach(function (b) {
+      addBuff(f, battle, { stat: b.stat, mult: b.mult, turns: b.turns, label: b.label, icon: b.icon }, events);
+      effects.push(b.label + ' · ' + b.turns + ' tours');
+    });
+    if (fx.critTurns) {
+      f.critGuaranteed = Math.max(f.critGuaranteed, fx.critTurns);
+      f.critBornTurn = battle.turnNumber;
+      events.push({ t: 'critReady', side: f.side, turns: fx.critTurns });
+      effects.push('Critiques garantis ' + fx.critTurns + ' tours');
+    }
+    if (fx.debuff && battle.active) {
+      addBuff(foe, battle, {
+        stat: fx.debuff.stat, mult: fx.debuff.mult, turns: fx.debuff.turns,
+        label: fx.debuff.label, icon: fx.debuff.icon
+      }, events);
+      effects.push(fx.debuff.label + ' sur ' + foe.name);
+    }
+
+    /* 6. Contre-coup (surchauffe, surtension…) */
+    if (fx.recoil && battle.active) {
+      const dmg = Math.max(1, Math.round(f.maxHp * fx.recoil));
+      f.hp = Math.max(0, f.hp - dmg);
+      events.push({ t: 'recoil', side: f.side, amount: dmg });
+      effects.push('−' + dmg + ' PV (surchauffe)');
+      log(battle, '🔥 ' + f.name + ' encaisse ' + dmg + ' dégâts de surchauffe.', 'ultimate');
+      if (f.hp <= 0) {
+        battle.active = false;
+        battle.winner = foe;
+        battle.endReason = 'ko';
+        events.push({ t: 'ko', side: f.side, name: f.name, winner: foe.side });
+        log(battle, '☠️ ' + f.name + ' s’effondre sous la surchauffe !', 'ko');
+      }
+    }
+
+    /* 7. Ligne d'historique principale, enrichie des effets */
+    const row = (ev && ev.row) || recordHistory(battle, {
+      actor: f.name, actorSide: f.side, target: foe.name, action: ult.name,
+      actionKind: 'ultimate', damage: 0, hits: 0, crit: false, dodged: false,
+      blocked: false, heal: 0, result: 'Ultime'
+    });
+    row.effects = effects;
+    row.ult = true;
+    row.ultName = ult.name;
+    row.ultIcon = ult.icon;
+    row.ultFx = ult.fx;
+    // instantané final : les effets de l'ultime sont déjà appliqués
+    row.hpLeft = { left: battle.a.hp, right: battle.b.hp };
+    row.hpPct = {
+      left: Math.round(battle.a.hp / battle.a.maxHp * 100),
+      right: Math.round(battle.b.hp / battle.b.maxHp * 100)
+    };
+    row.ultAfter = { left: battle.a.ult, right: battle.b.ult };
+    if (!ev) events.push({ t: 'ultimateSupport', side: f.side, row: row });
+  }
+
   function tickBuffs(battle, f, events) {
     const fresh = f.critBornTurn === battle.turnNumber;
     if (f.critGuaranteed > 0 && !fresh) {
@@ -491,6 +886,8 @@
       newRound(battle, false);
       battle.a.energy = clamp(battle.a.energy + CFG.ENERGY_ROUND, 0, CFG.ENERGY_MAX);
       battle.b.energy = clamp(battle.b.energy + CFG.ENERGY_ROUND, 0, CFG.ENERGY_MAX);
+      gainUlt(battle.a, CFG.ULT_ROUND, events);
+      gainUlt(battle.b, CFG.ULT_ROUND, events);
       events.push({ t: 'round', n: battle.round, order: battle.order.slice() });
       log(battle, '— Round ' + battle.round + ' —', 'round');
     }
@@ -510,6 +907,16 @@
     // La garde tient jusqu'au prochain tour de son auteur : on la relâche ici.
     actor.defending = false;
 
+    // Recharge de la jauge d'ultime (bloque le gain tant qu'elle n'est pas finie)
+    if (actor.ultCooldown > 0) {
+      actor.ultCooldown--;
+      events.push({ t: 'ultCooldown', side: actor.side, turns: actor.ultCooldown });
+      if (actor.ultCooldown === 0) {
+        events.push({ t: 'ultReady', side: actor.side });
+        log(battle, '✦ La jauge ultime de ' + actor.name + ' est de nouveau active.', 'ultimate');
+      }
+    }
+
     if (actor.stun > 0) {
       actor.stun--;
       events.push({ t: 'stunned', side: actor.side });
@@ -523,10 +930,27 @@
       return events;
     }
 
-    if (action === 'defend') {
+    // Passif de boss : peut forcer une action (« overload ») ou poser un effet
+    const forced = applyPassive(battle, actor, events);
+    const choice = forced || action;
+
+    if (choice === 'defend') {
       doDefend(battle, actor, events);
-    } else if (action === 'special' && canUseSpecial(actor)) {
+    } else if (choice === 'special' && canUseSpecial(actor)) {
       doSpecial(battle, actor, foe, events);
+    } else if (choice === 'ultimate' && canUseUltimate(actor)) {
+      doUltimate(battle, actor, foe, events);
+    } else if (choice === 'overload') {
+      const p = actor.brand.passive || {};
+      const ev = strike(battle, actor, foe, {
+        mult: p.mult || 1.6,
+        hits: p.hits || 1,
+        pierce: p.pierce || 0,
+        special: { name: p.name || 'Surcharge', icon: p.icon || '⚡', type: 'overload', desc: '' }
+      });
+      events.push(ev);
+      events.push({ t: 'bossOverload', side: actor.side, name: p.name || 'Surcharge', icon: p.icon || '⚡' });
+      log(battle, (p.icon || '⚡') + ' ' + actor.name + ' libère « ' + (p.name || 'Surcharge') + ' » !', 'special');
     } else {
       events.push(strike(battle, actor, foe, {}));
     }
@@ -538,6 +962,7 @@
       }
       events.push({ t: 'end', winner: battle.winner ? battle.winner.side : null, rounds: battle.round, reason: battle.endReason });
     } else {
+      checkPhases(battle, events);
       endTurn(battle, events);
     }
     return events;
@@ -555,6 +980,9 @@
     const isDefensive = sp.type === 'def_up' || sp.type === 'invincible' || sp.type === 'stun_heal';
     const isFinisher = sp.type === 'pierce' || sp.type === 'multi' || sp.type === 'drain' || sp.type === 'stun';
     const isSetup = sp.type === 'atk_up' || sp.type === 'overclock' || sp.type === 'crit_up';
+
+    // L'ultime est prêt : il ne se refuse pas (la jauge est pleine, autant frapper fort)
+    if (canUseUltimate(f)) return 'ultimate';
 
     if (canSpecial) {
       if (isDefensive && hpRatio < 0.45) return 'special';
@@ -586,7 +1014,12 @@
     createFighter: createFighter,
     currentActor: currentActor,
     opponentOf: opponentOf,
+    levelGrowth: levelGrowth,
     canUseSpecial: canUseSpecial,
+    canUseUltimate: canUseUltimate,
+    gainUlt: gainUlt,
+    checkPhases: checkPhases,
+    applyPassive: applyPassive,
     act: act,
     aiChoose: aiChoose,
     autoPlay: autoPlay,

@@ -29,6 +29,7 @@
     setEnabled: function (on) {
       this.enabled = !!on;
       if (this.enabled) this.resume();
+      else this.stopBossMusic();
     },
 
     toggle: function () {
@@ -77,6 +78,51 @@
       src.start(t0);
     },
 
+    /* --- Musique de boss ---
+       Boucle rythmique générée à la volée (basse + lead + percussions).
+       Chaque boss a son tempo, sa note de base et sa gamme. */
+    _boss: null,
+
+    startBossMusic: function (theme) {
+      this.stopBossMusic();
+      if (!this.enabled || !theme) return;
+      const ctx = this.init();
+      if (!ctx) return;
+      const self = this;
+      const beat = 60000 / (theme.bpm || 130);
+      const half = beat / 2;
+      const bass = theme.bass || [0, 0, 3, 5];
+      const lead = theme.lead || [12, 15, 19, 15];
+      const wave = theme.wave || 'sawtooth';
+      let step = 0;
+      const note = function (semi, dur, vol, type, delay) {
+        self._tone({
+          type: type || wave,
+          from: 55 * Math.pow(2, ((theme.root || 55) + semi) / 12),
+          to: 55 * Math.pow(2, ((theme.root || 55) + semi) / 12),
+          dur: dur, vol: vol, delay: delay || 0
+        });
+      };
+      const bar = function () {
+        if (!self._boss) return;
+        const i = step % 4;
+        note(bass[i], half * 0.9, 0.18, 'triangle', 0);
+        note(bass[i] - 12, half * 0.8, 0.12, 'sine', half);
+        if (i === 0 || i === 2) {
+          self._noise({ dur: 0.09, freq: 260, q: 0.8, vol: 0.16, filter: 'lowpass' });
+        }
+        if (i === 1 || i === 3) self._noise({ dur: 0.05, freq: 5200, q: 0.7, vol: 0.06 });
+        note(lead[i], half * 0.55, 0.075, 'square', half * 0.5);
+        step++;
+      };
+      bar();
+      this._boss = setInterval(bar, beat);
+    },
+
+    stopBossMusic: function () {
+      if (this._boss) { clearInterval(this._boss); this._boss = null; }
+    },
+
     /* --- effets du jeu --- */
     play: function (name) {
       if (!this.enabled) return;
@@ -121,6 +167,16 @@
         case 'stun':
           this._tone({ type: 'square', from: 700, to: 90, dur: 0.5, vol: 0.2 });
           break;
+        case 'ultReady':
+          [659, 880, 1318].forEach((f, i) => this._tone({ type: 'triangle', from: f, to: f, dur: 0.22, vol: 0.13, delay: i * 0.07 }));
+          break;
+        case 'ultimate':
+          this._tone({ type: 'sawtooth', from: 110, to: 1800, dur: 0.85, vol: 0.2 });
+          this._noise({ dur: 0.5, freq: 2600, q: 0.5, vol: 0.14, delay: 0.2 });
+          this._tone({ type: 'square', from: 420, to: 55, dur: 0.8, vol: 0.22, delay: 0.6 });
+          this._noise({ dur: 0.9, freq: 700, q: 0.6, vol: 0.34, delay: 0.58, filter: 'lowpass' });
+          [392, 523, 659, 784, 1046].forEach((f, i) => this._tone({ type: 'triangle', from: f, to: f, dur: 0.5, vol: 0.15, delay: 0.62 + i * 0.06 }));
+          break;
         case 'ko':
           this._noise({ dur: 0.7, freq: 260, q: 0.8, vol: 0.4, filter: 'lowpass' });
           this._tone({ type: 'sawtooth', from: 320, to: 40, dur: 1.1, vol: 0.34 });
@@ -131,6 +187,23 @@
           break;
         case 'lose':
           [440, 349, 262, 196].forEach((f, i) => this._tone({ type: 'sine', from: f, to: f * 0.98, dur: 0.4, vol: 0.18, delay: i * 0.16 }));
+          break;
+        case 'bossIntro':
+          this._noise({ dur: 1.1, freq: 180, q: 0.5, vol: 0.3, filter: 'lowpass' });
+          [55, 58, 62].forEach((f, i) => this._tone({ type: 'sawtooth', from: f, to: f * 2, dur: 1.2, vol: 0.14, delay: i * 0.16 }));
+          this._tone({ type: 'square', from: 900, to: 120, dur: 0.9, vol: 0.16, delay: 0.5 });
+          break;
+        case 'bossPhase':
+          this._tone({ type: 'sawtooth', from: 220, to: 60, dur: 0.7, vol: 0.3 });
+          this._tone({ type: 'square', from: 1200, to: 200, dur: 0.5, vol: 0.18 });
+          this._noise({ dur: 0.6, freq: 400, q: 0.5, vol: 0.34, filter: 'lowpass' });
+          [65, 61, 68].forEach((f, i) => this._tone({ type: 'square', from: f * 2, to: f * 2, dur: 0.3, vol: 0.12, delay: 0.5 + i * 0.1 }));
+          break;
+        case 'bossKo':
+          this._noise({ dur: 1.4, freq: 200, q: 0.6, vol: 0.4, filter: 'lowpass' });
+          this._tone({ type: 'sawtooth', from: 300, to: 30, dur: 1.6, vol: 0.32 });
+          this._noise({ dur: 0.5, freq: 1600, q: 0.5, vol: 0.22, delay: 0.4 });
+          [523, 659, 784, 1046].forEach((f, i) => this._tone({ type: 'triangle', from: f, to: f, dur: 0.5, vol: 0.16, delay: 0.9 + i * 0.12 }));
           break;
         default:
           break;

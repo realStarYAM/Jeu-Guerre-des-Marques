@@ -25,6 +25,8 @@
   </button>
   <nav class="topbar__nav">
     <button class="chip-btn" data-goto="rules" title="Règles du combat">📖 Règles</button>
+    <button class="chip-btn" id="goto-bossrush" data-goto="bossrush" title="Boss Rush : affrontez les boss de l’arène">👑 Boss</button>
+    <button class="chip-btn" id="goto-profil" data-goto="profil" title="Progression, niveaux et trophées">👤 Profil</button>
     <button class="chip-btn" data-goto="stats" title="Statistiques">🏆 Palmarès</button>
     <button class="chip-btn" id="btn-sound" title="Activer / couper le son">🔊 Son</button>
   </nav>
@@ -37,13 +39,27 @@
     <div class="hero">
       <p class="hero__kicker">Arène technologique · 11 marques · 1 champion</p>
       <h1 class="hero__title">GUERRE DES<br><span class="grad">MARQUES</span></h1>
-      <p class="hero__sub">PV, attaque, défense, vitesse et pouvoir spécial.<br>Coups critiques, K.O. et historique complet des attaques.</p>
+      <p class="hero__sub">PV, attaque, défense, vitesse, pouvoir spécial et <b>jauge Ultime</b>.<br>Coups critiques, cinématiques d’ultime et historique détaillé du combat.</p>
       <div class="hero__actions">
         <button class="btn btn--primary btn--xl" data-mode="duel">⚔️ Duel</button>
         <button class="btn btn--ghost btn--xl" data-mode="tournament">🏆 Tournoi</button>
         <button class="btn btn--ghost btn--xl" data-mode="auto">🎬 Combat auto</button>
+        <button class="btn btn--boss btn--xl" id="btn-boss" title="Boss Rush : une série de boss surpuissants">👑 Boss Rush</button>
       </div>
       <div class="hero__roster" id="menu-roster"></div>
+
+      <button class="profil-strip" id="menu-progress" data-goto="profil" title="Niveaux, skins, badges et trophées">
+        <span class="profil-strip__rank" id="menu-rank-icon">🥉</span>
+        <span class="profil-strip__body">
+          <span class="profil-strip__top">
+            <b id="menu-rank-name">Bronze</b>
+            <span class="lvl" id="menu-level">Nv <b>1</b></span>
+          </span>
+          <span class="bar bar--xp"><span class="bar__fill xprow__fill" id="menu-xp-fill"></span></span>
+          <span class="profil-strip__hint" id="menu-progress-hint">Aucun combat disputé — lancez un duel !</span>
+        </span>
+        <span class="profil-strip__go">👤 Profil →</span>
+      </button>
     </div>
   </section>
 
@@ -73,8 +89,16 @@
           <p>Chaque marque a un pouvoir unique, activable dès que la <strong>jauge d’énergie</strong> atteint son coût. L’énergie monte en frappant (+16), en encaissant (+9), en se défendant (+20) et à chaque round (+4).</p>
         </article>
         <article class="rule">
+          <h3>✦ Jauge Ultime</h3>
+          <p>Indépendante de l’énergie, elle monte en frappant (+14), en encaissant (+9), en gardant (+12) et à chaque round (+4). À <strong>100 %</strong>, l’ultime se déclenche : cinématique, dégâts critiques, secousse d’écran — puis <strong>2 tours de recharge</strong> pendant lesquels la jauge reste bloquée.</p>
+        </article>
+        <article class="rule">
+          <h3>🌟 Les 11 ultimes</h3>
+          <p>Reality Distortion · Galaxy Storm · HyperCharge · Harmony Strike · Gemini Blast · Windows Overdrive · PlayStation Rage · Super Star · Ryzen Fury · RTX Overdrive · Core Boost. Un ultime ne peut être <strong>ni esquivé ni réduit par la garde</strong>.</p>
+        </article>
+        <article class="rule">
           <h3>⌨️ Raccourcis</h3>
-          <p><kbd>A</kbd> attaquer · <kbd>D</kbd> défendre · <kbd>S</kbd> pouvoir spécial · <kbd>Espace</kbd> continuer · <kbd>M</kbd> son</p>
+          <p><kbd>A</kbd> attaquer · <kbd>D</kbd> défendre · <kbd>S</kbd> pouvoir spécial · <kbd>U</kbd> ultime · <kbd>Espace</kbd> continuer · <kbd>M</kbd> son</p>
         </article>
       </div>
       <button class="btn btn--primary" data-goto="menu">← Retour au menu</button>
@@ -104,9 +128,28 @@
         <span class="hud-pill hud-pill--round">Round <b id="hud-round">1</b></span>
         <span class="hud-pill" id="hud-turn">À vous</span>
         <div class="hud-tools">
+          <button class="chip-btn chip-btn--sm" id="btn-cine" title="Cinématiques d’ultime longues ou courtes">🎬 Ciné : on</button>
           <button class="chip-btn chip-btn--sm" id="btn-speed" title="Vitesse des animations">⏩ ×1</button>
           <button class="chip-btn chip-btn--sm" id="btn-auto" title="Laisser l’IA jouer">🤖 Auto : off</button>
         </div>
+      </div>
+
+      <!-- Barre de PV du boss (mode Boss Rush) -->
+      <div class="bossbar" id="bossbar" hidden>
+        <div class="bossbar__head">
+          <span class="bossbar__icon" id="bossbar-icon">🤖</span>
+          <span class="bossbar__id">
+            <b class="bossbar__name" id="bossbar-name">—</b>
+            <span class="bossbar__phase" id="bossbar-phase">Phase 1 / 1</span>
+          </span>
+          <span class="bossbar__pv"><b id="bossbar-now">0</b> / <span id="bossbar-max">0</span> PV</span>
+        </div>
+        <div class="bossbar__bar">
+          <div class="bossbar__ghost" id="bossbar-ghost"></div>
+          <div class="bossbar__fill" id="bossbar-fill"></div>
+          <div class="bossbar__marks" id="bossbar-marks"></div>
+        </div>
+        <p class="bossbar__power" id="bossbar-power">—</p>
       </div>
 
       <!-- Combattants -->
@@ -119,6 +162,7 @@
               <p class="fighter__cat" id="cat-left"></p>
             </div>
           </header>
+          <div class="fighter__lvl" id="lvl-left"></div>
 
           <div class="hp">
             <div class="hp__top">
@@ -142,6 +186,17 @@
             </div>
           </div>
 
+          <div class="ult" id="ult-box-left">
+            <div class="hp__top">
+              <span class="hp__label">✦ Ultime</span>
+              <span class="hp__numbers" id="ult-txt-left">0 %</span>
+            </div>
+            <div class="bar bar--ult">
+              <div class="bar__fill" id="ult-fill-left"></div>
+              <div class="bar__lock" id="ult-lock-left"><span id="ult-lock-txt-left">⏳ 2 tours</span></div>
+            </div>
+          </div>
+
           <ul class="chips" id="chips-left"></ul>
           <div class="fighter__body"><div class="avatar" id="avatar-left"></div></div>
           <div class="fx-layer" id="fx-left"></div>
@@ -160,6 +215,7 @@
             </div>
             <span class="badge" id="badge-right"></span>
           </header>
+          <div class="fighter__lvl fighter__lvl--right" id="lvl-right"></div>
 
           <div class="hp">
             <div class="hp__top">
@@ -183,6 +239,17 @@
             </div>
           </div>
 
+          <div class="ult" id="ult-box-right">
+            <div class="hp__top">
+              <span class="hp__label">✦ Ultime</span>
+              <span class="hp__numbers" id="ult-txt-right">0 %</span>
+            </div>
+            <div class="bar bar--ult">
+              <div class="bar__fill" id="ult-fill-right"></div>
+              <div class="bar__lock" id="ult-lock-right"><span id="ult-lock-txt-right">⏳ 2 tours</span></div>
+            </div>
+          </div>
+
           <ul class="chips" id="chips-right"></ul>
           <div class="fighter__body"><div class="avatar" id="avatar-right"></div></div>
           <div class="fx-layer" id="fx-right"></div>
@@ -199,16 +266,24 @@
           <button class="btn btn--attack" id="btn-attack">⚔️ Attaque<span class="btn__hint">A</span></button>
           <button class="btn btn--defend" id="btn-defend">🛡️ Défense<span class="btn__hint">D</span></button>
           <button class="btn btn--special" id="btn-special">⚡ <span id="special-name">Spécial</span><span class="btn__hint">S · <span id="special-cost">60</span>⚡</span></button>
+          <button class="btn btn--ultimate" id="btn-ultimate">✦ <span id="ultimate-name">Ultime</span><span class="btn__hint">U · <span id="ultimate-cost">100</span>%</span></button>
         </div>
       </div>
 
-      <!-- Historique des attaques -->
+      <!-- Historique détaillé des attaques -->
       <section class="history">
         <header class="history__head">
-          <h3>📜 Historique des attaques</h3>
+          <h3>📜 Historique détaillé</h3>
           <span class="history__count" id="history-count">0 action</span>
+          <div class="history__filters" id="history-filters">
+            <button class="filter-chip is-on" data-filter="all">Tout</button>
+            <button class="filter-chip" data-filter="ult">✦ Ultimes</button>
+            <button class="filter-chip" data-filter="crit">💥 Critiques</button>
+            <button class="filter-chip" data-filter="heal">💚 Soins</button>
+          </div>
           <button class="chip-btn chip-btn--sm" id="btn-clear-history" title="Vider la liste">Vider</button>
         </header>
+        <div class="history__recap" id="history-recap"></div>
         <div class="history__list" id="history-list">
           <p class="history__empty">Aucune attaque pour l’instant.</p>
         </div>
@@ -228,6 +303,84 @@
     </div>
   </section>
 
+
+  <!-- ============ BOSS RUSH ============ -->
+  <section class="screen" id="screen-bossrush">
+    <div class="panel panel--wide">
+      <h2 class="panel__title">👑 Boss Rush</h2>
+      <p class="panel__sub" id="bossrush-sub">
+        Choisissez une marque, enchaînez les boss et survivez jusqu’au bout.
+        Votre marque entre en <strong>surrégime</strong> : ses statistiques sont
+        multipliées pour tenir tête à ces monstres de silicium.
+      </p>
+
+      <h3 class="panel__subtitle">Difficulté</h3>
+      <div class="diff-picker" id="diff-picker"></div>
+
+      <h3 class="panel__subtitle">Votre Boss Rush</h3>
+      <div class="stat-grid" id="bossrush-stats"></div>
+
+      <h3 class="panel__subtitle">Les boss <span class="count-pill" id="bossrush-count">0 / 5</span></h3>
+      <div class="boss-grid" id="boss-grid"></div>
+
+      <h3 class="panel__subtitle">🏆 Trophées exclusifs <span class="count-pill" id="boss-trophy-count">0 / 0</span></h3>
+      <div class="trophy-grid" id="boss-trophy-grid"></div>
+
+      <div class="panel__actions">
+        <button class="btn btn--boss btn--xl" id="btn-start-boss">👑 Lancer le Boss Rush</button>
+        <button class="btn btn--ghost" id="btn-reset-boss">🔄 Réinitialiser le Boss Rush</button>
+        <button class="btn btn--ghost" data-goto="menu">← Retour au menu</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROFIL ============ -->
+  <section class="screen" id="screen-profil">
+    <div class="panel panel--wide">
+      <h2 class="panel__title">👤 Profil</h2>
+
+      <div class="profil__hero">
+        <div class="rank" id="rank-card">
+          <span class="rank__icon" id="rank-icon">🥉</span>
+          <div class="rank__body">
+            <span class="rank__label">Rang du joueur</span>
+            <b class="rank__name" id="rank-name">Bronze</b>
+            <div class="bar bar--rank"><div class="bar__fill" id="rank-fill"></div></div>
+            <span class="rank__next" id="rank-next">—</span>
+          </div>
+        </div>
+
+        <div class="level">
+          <span class="level__badge" id="level-badge">Nv 1</span>
+          <div class="level__body">
+            <div class="hp__top">
+              <span class="hp__label">Niveau global</span>
+              <span class="hp__numbers" id="level-xp-txt">0 / 30 PX</span>
+            </div>
+            <div class="bar bar--xp"><div class="bar__fill" id="level-xp-fill"></div></div>
+            <span class="level__hint" id="level-hint">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-grid" id="profil-stats"></div>
+
+      <h3 class="panel__subtitle">🏆 Trophées <span class="count-pill" id="trophy-count">0 / 0</span></h3>
+      <div class="trophy-grid" id="trophy-grid"></div>
+
+      <h3 class="panel__subtitle">👑 Titres de boss <span class="count-pill" id="title-count">0 / 0</span></h3>
+      <div class="title-grid" id="title-list"></div>
+
+      <h3 class="panel__subtitle">🎖️ Écurie — niveaux, skins et maîtrise</h3>
+      <div class="roster" id="roster-list"></div>
+
+      <div class="panel__actions">
+        <button class="btn btn--ghost" id="btn-reset-progress">🔄 Réinitialiser la progression</button>
+        <button class="btn btn--primary" data-goto="menu">← Retour au menu</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ PALMARÈS ============ -->
   <section class="screen" id="screen-stats">
     <div class="panel panel--wide">
@@ -243,9 +396,55 @@
   </section>
 </main>
 
+<!-- Cinématique d'ultime -->
+<div class="cine" id="cine" aria-hidden="true" data-fx="distort">
+  <div class="cine__dim"></div>
+  <div class="cine__bg"></div>
+  <div class="cine__rays"></div>
+  <div class="cine__stripe"></div>
+  <div class="cine__spot"></div>
+  <div class="cine__portrait"><span class="cine__mono" id="cine-mono">A</span></div>
+  <div class="cine__stack">
+    <span class="cine__kicker" id="cine-kicker">ULTIMATE !</span>
+    <div class="cine__text">
+      <span class="cine__brand" id="cine-brand">Apple</span>
+      <span class="cine__ult" id="cine-ult">Ultime</span>
+      <span class="cine__phrase" id="cine-phrase"></span>
+    </div>
+  </div>
+  <div class="cine__fx" id="cine-fx"></div>
+  <div class="cine__flash"></div>
+  <i class="cine__bar cine__bar--top"></i>
+  <i class="cine__bar cine__bar--bottom"></i>
+</div>
+
 <!-- Overlay K.O. -->
 <div class="ko" id="ko-overlay" aria-hidden="true">
   <span class="ko__text">K.O.</span>
+</div>
+
+<!-- Cinématique d'introduction d'un boss -->
+<div class="bossintro" id="boss-intro" aria-hidden="true">
+  <div class="bossintro__bg" id="bossintro-bg"></div>
+  <div class="bossintro__grid"></div>
+  <div class="bossintro__rays"></div>
+  <div class="bossintro__stack">
+    <span class="bossintro__kicker" id="bossintro-kicker">BOSS</span>
+    <span class="bossintro__icon" id="bossintro-icon">🤖</span>
+    <h2 class="bossintro__name" id="bossintro-name">MEGA TECH</h2>
+    <p class="bossintro__phrase" id="bossintro-phrase"></p>
+    <div class="bossintro__stats" id="bossintro-stats"></div>
+    <span class="bossintro__power" id="bossintro-power"></span>
+    <span class="bossintro__go" id="bossintro-go">FIGHT !</span>
+  </div>
+</div>
+
+<!-- K.O. de boss -->
+<div class="bossko" id="boss-ko" aria-hidden="true">
+  <div class="bossko__flash"></div>
+  <span class="bossko__text">BOSS<br>K.O.</span>
+  <span class="bossko__name" id="bossko-name"></span>
+  <div class="bossko__shards" id="bossko-shards"></div>
 </div>
 
 <!-- Overlay résultat -->
@@ -259,8 +458,26 @@
   </div>
 </div>
 
+
+<!-- Écran de récompenses (après chaque combat) -->
+<div class="overlay overlay--rewards" id="rewards-overlay" aria-hidden="true">
+  <div class="rewards">
+    <span class="rewards__kicker">Récompenses de combat</span>
+    <h2 class="rewards__title">+<span id="rewards-xp">0</span> PX</h2>
+    <ul class="rewards__parts" id="rewards-parts"></ul>
+    <div class="rewards__bars" id="rewards-bars"></div>
+    <div class="rewards__unlocks" id="rewards-unlocks"></div>
+    <div class="rewards__rank" id="rewards-rank"></div>
+    <div class="rewards__actions">
+      <button class="btn btn--primary" id="btn-rewards-continue">Continuer</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/brands.js"></script>
+<script src="js/bosses.js"></script>
 <script src="js/engine.js"></script>
+<script src="js/progression.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/ui.js"></script>
 </body>
