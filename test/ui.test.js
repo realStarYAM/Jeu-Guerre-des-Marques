@@ -183,7 +183,8 @@ test('interface : raccourcis clavier et réglages (vitesse, son, palmarès)', { 
   // Palmarès
   click(doc, '[data-goto="stats"]');
   await waitFor(dom, () => doc.querySelector('#screen-stats').classList.contains('is-active'), 5000, 'écran palmarès');
-  assert.strictEqual(doc.querySelectorAll('#stat-grid .stat-card').length, 7, 'cartes de statistiques manquantes');
+  assert.strictEqual(doc.querySelectorAll('#stat-grid .stat-card').length, 8, 'cartes de statistiques manquantes');
+  assert.match(doc.querySelector('#stat-grid').textContent, /Ultimes lancés/, 'compteur d’ultimes absent du palmarès');
   assert.match(doc.querySelector('#duel-list').textContent, /Aucun combat/, 'message d’attente absent');
 
   // Règles
@@ -207,6 +208,92 @@ test('interface : raccourcis clavier et réglages (vitesse, son, palmarès)', { 
   assert.notStrictEqual(leftName, rightName, 'les deux marques doivent être différentes');
   await waitFor(dom, () => doc.querySelectorAll('#history-list .hrow').length >= 2, 60000, 'attaques en mode auto');
 
+  dom.window.close();
+});
+
+test('interface : la jauge ultime se charge, lance la cinématique puis passe en recharge', { timeout: 180000 }, async () => {
+  const dom = await openGame();
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  // Vitesse maximale pour raccourcir les animations
+  click(doc, '#btn-speed');
+  click(doc, '#btn-speed');
+
+  click(doc, '[data-mode="duel"]');
+  await waitFor(dom, () => doc.querySelector('#screen-select').classList.contains('is-active'), 5000, 'sélection');
+  const pick = (id) => {
+    const card = Array.from(doc.querySelectorAll('#brand-grid .bcard')).find((c) => c.dataset.brand === id);
+    assert.ok(card, 'carte manquante : ' + id);
+    card.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  };
+  // Samsung (482 PV, défense 88) tient largement le temps de charger la jauge
+  pick('samsung');
+  await waitFor(dom, () => doc.querySelector('#select-title').textContent.includes('adversaire'), 5000, 'étape 2');
+  pick('intel');
+  await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 5000, 'arène');
+
+  // Jauge d'ultime présente et vide au départ
+  assert.strictEqual(doc.querySelector('#ult-txt-left').textContent, '0 %');
+  const btnUlt = doc.querySelector('#btn-ultimate');
+  assert.strictEqual(btnUlt.disabled, true, 'l’ultime ne doit pas être disponible à 0 %');
+  assert.match(btnUlt.textContent, /Galaxy Storm/, 'le nom de l’ultime doit être affiché');
+
+  // Attaquer jusqu'à ce que la jauge affiche 100 % (≈ 4 rounds)
+  let guard = 20;
+  while (guard-- > 0) {
+    await waitFor(dom, () => !doc.querySelector('#btn-attack').disabled ||
+      doc.querySelector('#result-overlay').classList.contains('is-open'), 60000, 'tour du joueur');
+    if (doc.querySelector('#result-overlay').classList.contains('is-open')) break;
+    if (!btnUlt.disabled) break;             // jauge pleine et main au joueur
+    click(doc, '#btn-attack');
+    await tick(300);
+  }
+  assert.strictEqual(btnUlt.disabled, false, 'l’ultime devrait être disponible à 100 %');
+  assert.strictEqual(doc.querySelector('#ult-txt-left').textContent, '100 %', 'jauge non remplie');
+  assert.ok(doc.querySelector('#ult-box-left').classList.contains('is-ready'), 'jauge non marquée prête');
+  assert.match(doc.querySelector('#chips-left').textContent, /Ultime prêt/, 'puce « Ultime prêt » absente');
+
+  // Déclenchement → cinématique plein écran
+  click(doc, '#btn-ultimate');
+  await waitFor(dom, () => doc.querySelector('#cine').classList.contains('is-open'), 20000, 'cinématique d’ultime');
+  assert.strictEqual(doc.querySelector('#cine-brand').textContent, 'Samsung');
+  assert.strictEqual(doc.querySelector('#cine-ult').textContent, 'Galaxy Storm');
+  assert.match(doc.querySelector('#cine-phrase').textContent, /\S/, 'phrase de l’ultime absente');
+  assert.strictEqual(doc.querySelector('#cine').dataset.fx, 'storm');
+  assert.ok(doc.querySelector('#cine-mono').textContent.length > 0, 'portrait de la cinématique absent');
+  assert.ok(doc.body.classList.contains('is-quake-hard'), 'l’écran doit trembler pendant l’ultime');
+
+  // Fin de la cinématique → jauge à 0 et recharge armée
+  await waitFor(dom, () => !doc.querySelector('#cine').classList.contains('is-open'), 20000, 'fin de la cinématique');
+  await waitFor(dom, () => /Recharge ultime/.test(doc.querySelector('#chips-left').textContent), 20000, 'puce de recharge');
+  const bar = doc.querySelector('#ult-fill-left').parentElement;
+  assert.ok(bar.classList.contains('is-locked'), 'la jauge doit être verrouillée pendant la recharge');
+  assert.match(doc.querySelector('#ult-txt-left').textContent, /tour/, 'compteur de recharge absent');
+  assert.strictEqual(doc.querySelector('#ult-fill-left').style.width, '0%', 'jauge non vidée');
+
+  // Ligne d'ultime dans l'historique détaillé (celle du joueur, à gauche)
+  await waitFor(dom, () => doc.querySelector('#history-list .hrow--ult.hrow--left'), 30000, 'ligne d’ultime');
+  const ultRow = doc.querySelector('#history-list .hrow--ult.hrow--left');
+  assert.ok(ultRow, 'aucune ligne d’ultime du joueur dans l’historique');
+  assert.match(ultRow.textContent, /Galaxy Storm/);
+  assert.match(ultRow.querySelector('.tag--ult').textContent, /ULTIME/);
+  assert.match(doc.querySelector('#history-recap').textContent, /ultime/, 'récapitulatif absent');
+
+  // Déplier le détail de la ligne
+  ultRow.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.ok(ultRow.classList.contains('is-open'), 'le détail ne se déplie pas');
+  const detail = ultRow.querySelector('.hrow__detail').textContent;
+  assert.match(detail, /Round/, 'le détail doit préciser le round');
+  assert.match(detail, /Jauge ultime/, 'le détail doit préciser la jauge d’ultime');
+
+  // Filtre « Ultimes » de l'historique
+  const chipUlt = Array.from(doc.querySelectorAll('#history-filters .filter-chip')).find((c) => c.dataset.filter === 'ult');
+  chipUlt.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.match(doc.querySelector('#history-list').className, /is-filter-ult/, 'filtre non appliqué');
+  assert.ok(chipUlt.classList.contains('is-on'), 'puce de filtre non activée');
+
+  await tick(200);
   dom.window.close();
 });
 
@@ -237,10 +324,18 @@ test('interface : le tournoi enchaîne les combats et affiche le parcours', { ti
 
   const next = Array.from(doc.querySelectorAll('#result-actions .btn')).find((b) => /Combat suivant|palmarès|Retenter/i.test(b.textContent));
   assert.ok(next, 'aucune action proposée après le combat');
+  const won = /Combat suivant|palmarès/.test(next.textContent);
   next.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
 
-  await waitFor(dom, () => /combat 2\/10/.test(doc.querySelector('#hud-mode').textContent), 20000, 'combat 2');
-  assert.strictEqual(doc.querySelectorAll('#bracket-list .bstep--done').length, 1, 'premier combat non validé dans le parcours');
+  if (won) {
+    await waitFor(dom, () => /combat 2\/10/.test(doc.querySelector('#hud-mode').textContent), 25000, 'combat 2');
+    assert.strictEqual(doc.querySelectorAll('#bracket-list .bstep--done').length, 1, 'premier combat non validé dans le parcours');
+  } else {
+    // Défaite : le bouton « Retenter » relance le même combat
+    await waitFor(dom, () => /combat 1\/10/.test(doc.querySelector('#hud-mode').textContent) &&
+      !doc.querySelector('#result-overlay').classList.contains('is-open'), 25000, 'nouvelle tentative');
+    assert.strictEqual(doc.querySelectorAll('#bracket-list .bstep--done').length, 0, 'le parcours ne doit pas avancer après une défaite');
+  }
   assert.notStrictEqual(doc.querySelector('#hp-now-left').textContent, '0', 'les PV doivent être restaurés au combat suivant');
 
   dom.window.close();

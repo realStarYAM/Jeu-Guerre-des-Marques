@@ -37,7 +37,7 @@
     <div class="hero">
       <p class="hero__kicker">Arène technologique · 11 marques · 1 champion</p>
       <h1 class="hero__title">GUERRE DES<br><span class="grad">MARQUES</span></h1>
-      <p class="hero__sub">PV, attaque, défense, vitesse et pouvoir spécial.<br>Coups critiques, K.O. et historique complet des attaques.</p>
+      <p class="hero__sub">PV, attaque, défense, vitesse, pouvoir spécial et <b>jauge Ultime</b>.<br>Coups critiques, cinématiques d’ultime et historique détaillé du combat.</p>
       <div class="hero__actions">
         <button class="btn btn--primary btn--xl" data-mode="duel">⚔️ Duel</button>
         <button class="btn btn--ghost btn--xl" data-mode="tournament">🏆 Tournoi</button>
@@ -73,8 +73,16 @@
           <p>Chaque marque a un pouvoir unique, activable dès que la <strong>jauge d’énergie</strong> atteint son coût. L’énergie monte en frappant (+16), en encaissant (+9), en se défendant (+20) et à chaque round (+4).</p>
         </article>
         <article class="rule">
+          <h3>✦ Jauge Ultime</h3>
+          <p>Indépendante de l’énergie, elle monte en frappant (+14), en encaissant (+9), en gardant (+12) et à chaque round (+4). À <strong>100 %</strong>, l’ultime se déclenche : cinématique, dégâts critiques, secousse d’écran — puis <strong>2 tours de recharge</strong> pendant lesquels la jauge reste bloquée.</p>
+        </article>
+        <article class="rule">
+          <h3>🌟 Les 11 ultimes</h3>
+          <p>Reality Distortion · Galaxy Storm · HyperCharge · Harmony Strike · Gemini Blast · Windows Overdrive · PlayStation Rage · Super Star · Ryzen Fury · RTX Overdrive · Core Boost. Un ultime ne peut être <strong>ni esquivé ni réduit par la garde</strong>.</p>
+        </article>
+        <article class="rule">
           <h3>⌨️ Raccourcis</h3>
-          <p><kbd>A</kbd> attaquer · <kbd>D</kbd> défendre · <kbd>S</kbd> pouvoir spécial · <kbd>Espace</kbd> continuer · <kbd>M</kbd> son</p>
+          <p><kbd>A</kbd> attaquer · <kbd>D</kbd> défendre · <kbd>S</kbd> pouvoir spécial · <kbd>U</kbd> ultime · <kbd>Espace</kbd> continuer · <kbd>M</kbd> son</p>
         </article>
       </div>
       <button class="btn btn--primary" data-goto="menu">← Retour au menu</button>
@@ -142,6 +150,17 @@
             </div>
           </div>
 
+          <div class="ult" id="ult-box-left">
+            <div class="hp__top">
+              <span class="hp__label">✦ Ultime</span>
+              <span class="hp__numbers" id="ult-txt-left">0 %</span>
+            </div>
+            <div class="bar bar--ult">
+              <div class="bar__fill" id="ult-fill-left"></div>
+              <div class="bar__lock" id="ult-lock-left"><span id="ult-lock-txt-left">⏳ 2 tours</span></div>
+            </div>
+          </div>
+
           <ul class="chips" id="chips-left"></ul>
           <div class="fighter__body"><div class="avatar" id="avatar-left"></div></div>
           <div class="fx-layer" id="fx-left"></div>
@@ -183,6 +202,17 @@
             </div>
           </div>
 
+          <div class="ult" id="ult-box-right">
+            <div class="hp__top">
+              <span class="hp__label">✦ Ultime</span>
+              <span class="hp__numbers" id="ult-txt-right">0 %</span>
+            </div>
+            <div class="bar bar--ult">
+              <div class="bar__fill" id="ult-fill-right"></div>
+              <div class="bar__lock" id="ult-lock-right"><span id="ult-lock-txt-right">⏳ 2 tours</span></div>
+            </div>
+          </div>
+
           <ul class="chips" id="chips-right"></ul>
           <div class="fighter__body"><div class="avatar" id="avatar-right"></div></div>
           <div class="fx-layer" id="fx-right"></div>
@@ -199,16 +229,24 @@
           <button class="btn btn--attack" id="btn-attack">⚔️ Attaque<span class="btn__hint">A</span></button>
           <button class="btn btn--defend" id="btn-defend">🛡️ Défense<span class="btn__hint">D</span></button>
           <button class="btn btn--special" id="btn-special">⚡ <span id="special-name">Spécial</span><span class="btn__hint">S · <span id="special-cost">60</span>⚡</span></button>
+          <button class="btn btn--ultimate" id="btn-ultimate">✦ <span id="ultimate-name">Ultime</span><span class="btn__hint">U · <span id="ultimate-cost">100</span>%</span></button>
         </div>
       </div>
 
-      <!-- Historique des attaques -->
+      <!-- Historique détaillé des attaques -->
       <section class="history">
         <header class="history__head">
-          <h3>📜 Historique des attaques</h3>
+          <h3>📜 Historique détaillé</h3>
           <span class="history__count" id="history-count">0 action</span>
+          <div class="history__filters" id="history-filters">
+            <button class="filter-chip is-on" data-filter="all">Tout</button>
+            <button class="filter-chip" data-filter="ult">✦ Ultimes</button>
+            <button class="filter-chip" data-filter="crit">💥 Critiques</button>
+            <button class="filter-chip" data-filter="heal">💚 Soins</button>
+          </div>
           <button class="chip-btn chip-btn--sm" id="btn-clear-history" title="Vider la liste">Vider</button>
         </header>
+        <div class="history__recap" id="history-recap"></div>
         <div class="history__list" id="history-list">
           <p class="history__empty">Aucune attaque pour l’instant.</p>
         </div>
@@ -242,6 +280,22 @@
     </div>
   </section>
 </main>
+
+<!-- Cinématique d'ultime -->
+<div class="cine" id="cine" aria-hidden="true">
+  <div class="cine__bg"></div>
+  <div class="cine__rays"></div>
+  <div class="cine__stripe"></div>
+  <div class="cine__cut"><span class="cine__mono" id="cine-mono">A</span></div>
+  <div class="cine__text">
+    <span class="cine__brand" id="cine-brand">Apple</span>
+    <span class="cine__ult" id="cine-ult">Ultime</span>
+    <span class="cine__phrase" id="cine-phrase"></span>
+  </div>
+  <div class="cine__shards" id="cine-shards"></div>
+  <i class="cine__bar cine__bar--top"></i>
+  <i class="cine__bar cine__bar--bottom"></i>
+</div>
 
 <!-- Overlay K.O. -->
 <div class="ko" id="ko-overlay" aria-hidden="true">

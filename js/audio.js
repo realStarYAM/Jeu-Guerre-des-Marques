@@ -121,6 +121,16 @@
         case 'stun':
           this._tone({ type: 'square', from: 700, to: 90, dur: 0.5, vol: 0.2 });
           break;
+        case 'ultReady':
+          [659, 880, 1318].forEach((f, i) => this._tone({ type: 'triangle', from: f, to: f, dur: 0.22, vol: 0.13, delay: i * 0.07 }));
+          break;
+        case 'ultimate':
+          this._tone({ type: 'sawtooth', from: 110, to: 1800, dur: 0.85, vol: 0.2 });
+          this._noise({ dur: 0.5, freq: 2600, q: 0.5, vol: 0.14, delay: 0.2 });
+          this._tone({ type: 'square', from: 420, to: 55, dur: 0.8, vol: 0.22, delay: 0.6 });
+          this._noise({ dur: 0.9, freq: 700, q: 0.6, vol: 0.34, delay: 0.58, filter: 'lowpass' });
+          [392, 523, 659, 784, 1046].forEach((f, i) => this._tone({ type: 'triangle', from: f, to: f, dur: 0.5, vol: 0.15, delay: 0.62 + i * 0.06 }));
+          break;
         case 'ko':
           this._noise({ dur: 0.7, freq: 260, q: 0.8, vol: 0.4, filter: 'lowpass' });
           this._tone({ type: 'sawtooth', from: 320, to: 40, dur: 1.1, vol: 0.34 });

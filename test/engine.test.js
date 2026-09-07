@@ -201,6 +201,154 @@ test('K.O. : le combat s’arrête et désigne un vainqueur', () => {
   assert.deepStrictEqual(E.act(battle, 'attack'), []);
 });
 
+test('chaque marque possède un ultime complet et unique', () => {
+  const names = new Set();
+  for (const b of E.BRANDS) {
+    const u = b.ultimate;
+    assert.ok(u, b.id + ' : ultime manquant');
+    assert.ok(u.name && u.icon && u.phrase && u.fx, b.id + ' : ultime incomplet');
+    assert.ok(u.desc && u.desc.length > 10, b.id + ' : description d’ultime manquante');
+    assert.ok(!names.has(u.name), 'ultime en double : ' + u.name);
+    names.add(u.name);
+    const fx = u.effects;
+    assert.ok(fx && typeof fx === 'object', b.id + ' : effets d’ultime absents');
+    const hasEffect = ['mult', 'heal', 'shieldTurns', 'stunTurns', 'buffs', 'debuff', 'stripBuffs', 'breakShield']
+      .some((k) => fx[k] !== undefined);
+    assert.ok(hasEffect, b.id + ' : l’ultime n’a aucun effet');
+  }
+  assert.strictEqual(names.size, E.BRANDS.length);
+});
+
+test('jauge d’ultime : remplissage, déclenchement puis recharge bloquée', () => {
+  const battle = E.createBattle('apple', 'intel', { rng: always(0.99) });
+  assert.strictEqual(battle.a.ult, 0);
+  assert.strictEqual(E.canUseUltimate(battle.a), false);
+
+  actOnSide(battle, 'left', 'attack');
+  assert.strictEqual(battle.a.ult, E.CFG.ULT_ATTACK);
+  assert.strictEqual(battle.b.ult, E.CFG.ULT_HIT);
+
+  // Jauge pleine → l'ultime devient disponible
+  battle.a.ult = 100;
+  assert.strictEqual(E.canUseUltimate(battle.a), true);
+
+  const events = actOnSide(battle, 'left', 'ultimate');
+  const cast = events.find((e) => e.t === 'ultimateCast');
+  assert.ok(cast, 'événement ultimateCast absent');
+  assert.strictEqual(cast.name, 'Reality Distortion');
+  assert.strictEqual(battle.a.ult, 0, 'la jauge doit être vidée');
+  assert.strictEqual(battle.a.ultCooldown, E.CFG.ULT_COOLDOWN, 'recharge non armée');
+  assert.strictEqual(battle.stats.ultimates, 1);
+  assert.strictEqual(battle.a.ultUsed, 1);
+
+  // Pendant la recharge, la jauge ne monte plus et l'ultime est verrouillé
+  const hpBefore = battle.b.hp;
+  actOnSide(battle, 'right', 'attack');      // Apple encaisse → gain bloqué
+  assert.strictEqual(battle.a.ult, 0, 'la jauge ne doit pas monter pendant la recharge');
+  assert.strictEqual(E.canUseUltimate(battle.a), false);
+  assert.ok(battle.b.hp <= hpBefore);
+
+  // Tour suivant : la recharge tombe à 1
+  actOnSide(battle, 'left', 'attack');
+  assert.strictEqual(battle.a.ultCooldown, E.CFG.ULT_COOLDOWN - 1);
+  assert.strictEqual(battle.a.ult, 0);
+
+  // Encore un tour : la jauge est de nouveau active
+  actOnSide(battle, 'left', 'attack');
+  assert.strictEqual(battle.a.ultCooldown, 0);
+  assert.strictEqual(battle.a.ult, E.CFG.ULT_ATTACK);
+});
+
+test('l’ultime ne peut être ni esquivé ni réduit par la garde', () => {
+  // Microsoft est plus lent que Google : ses attaques de base se font esquiver (tirage 0)
+  const plain = E.createBattle('microsoft', 'google', { rng: always(0) });
+  actOnSide(plain, 'left', 'attack');
+  assert.strictEqual(lastActionOf(plain, 'left').result, 'Esquivé', 'l’attaque de base doit être esquivée');
+
+  // Référence : ultime lancé sur une cible qui ne se protège pas
+  const open = E.createBattle('microsoft', 'google', { rng: always(0.99) });
+  open.a.ult = 100;
+  actOnSide(open, 'left', 'ultimate');
+  const refDamage = lastActionOf(open, 'left').damage;
+  assert.ok(refDamage > 0, 'l’ultime doit infliger des dégâts');
+
+  // Même ultime, mais la cible avait levé sa garde
+  const guarded = E.createBattle('microsoft', 'google', { rng: always(0.99) });
+  actOnSide(guarded, 'right', 'defend');
+  assert.strictEqual(guarded.b.defending, true, 'la garde devrait être levée');
+  guarded.a.ult = 100;
+  const events = actOnSide(guarded, 'left', 'ultimate');
+  const strikeEv = events.find((e) => e.t === 'strike');
+  assert.ok(strikeEv, 'frappe d’ultime absente');
+  assert.strictEqual(strikeEv.hits[0].dodged, false, 'un ultime ne peut pas être esquivé');
+  assert.strictEqual(guarded.b.defending, false, 'la garde doit céder face à un ultime');
+  assert.strictEqual(lastActionOf(guarded, 'left').damage, refDamage, 'la garde ne réduit pas un ultime');
+  assert.ok(guarded.b.hp < guarded.b.maxHp);
+});
+
+test('chaque ultime se déclenche, frappe et remplit l’historique détaillé', () => {
+  for (const brand of E.BRANDS) {
+    const battle = E.createBattle(brand.id, 'intel', { rng: rngFrom(21) });
+    battle.a.ult = 100;
+    const events = actOnSide(battle, 'left', 'ultimate');
+    const cast = events.find((e) => e.t === 'ultimateCast');
+    assert.ok(cast, brand.id + ' : ultime non déclenché');
+
+    const row = battle.history.find((h) => h.actionKind === 'ultimate' && h.actorSide === 'left');
+    assert.ok(row, brand.id + ' : ligne d’ultime absente de l’historique');
+    assert.strictEqual(row.action, brand.ultimate.name);
+    assert.strictEqual(row.ult, true);
+    assert.strictEqual(row.round, 1);
+    assert.ok(row.hpLeft && typeof row.hpLeft.right === 'number', brand.id + ' : PV restants absents');
+    assert.ok(row.hpPct && typeof row.hpPct.right === 'number', brand.id + ' : pourcentage de PV absent');
+    assert.ok(row.ultAfter && row.ultAfter.left === 0, brand.id + ' : jauge d’ultime non renseignée');
+    assert.ok(Array.isArray(row.effects), brand.id + ' : effets non listés');
+    assert.ok(row.index >= 1, brand.id + ' : numéro d’action absent');
+  }
+});
+
+test('les effets d’ultime s’appliquent (étourdissement, soin, buffs, dissipation)', () => {
+  // Harmony Strike : étourdissement de 2 tours
+  const stun = E.createBattle('huawei', 'microsoft', { rng: always(0.99) });
+  stun.a.ult = 100;
+  actOnSide(stun, 'left', 'ultimate');
+  assert.strictEqual(stun.b.stun, 2);
+  assert.ok(stun.history.find((h) => h.result.indexOf('Étourdi 2 tours') === 0), 'ligne de contrôle absente');
+
+  // Super Star : soin + invulnérabilité
+  const star = E.createBattle('nintendo', 'amd', { rng: always(0.99) });
+  star.a.hp = 100;
+  star.a.ult = 100;
+  actOnSide(star, 'left', 'ultimate');
+  assert.strictEqual(star.a.shield, 2, 'invulnérabilité non posée');
+  assert.ok(star.a.hp > 100, 'soin d’ultime non appliqué');
+
+  // Ryzen Fury : buffs + contre-coup
+  const amd = E.createBattle('amd', 'intel', { rng: always(0.99) });
+  amd.a.ult = 100;
+  const hpBefore = amd.a.hp;
+  actOnSide(amd, 'left', 'ultimate');
+  assert.ok(amd.a.hp < hpBefore, 'le contre-coup de Ryzen Fury est absent');
+  assert.ok(amd.a.buffs.length >= 2, 'les buffs d’ultime ne sont pas posés');
+
+  // RTX Overdrive brise l'invulnérabilité, Reality Distortion dissipe les buffs
+  const rtx = E.createBattle('nvidia', 'nintendo', { rng: always(0.99) });
+  rtx.b.shield = 3;
+  rtx.b.buffs = [{ stat: 'defense', mult: 1.5, turns: 3, label: '+50 % défense', icon: '🛡️' }];
+  rtx.a.ult = 100;
+  actOnSide(rtx, 'left', 'ultimate');
+  const nvidiaRow = rtx.history.find((h) => h.actionKind === 'ultimate');
+  assert.ok(rtx.b.hp < rtx.b.maxHp, 'RTX Overdrive doit traverser le bouclier');
+
+  const apple = E.createBattle('apple', 'nintendo', { rng: always(0.99) });
+  apple.b.buffs = [{ stat: 'defense', mult: 1.5, turns: 3, label: '+50 % défense', icon: '🛡️' }];
+  apple.a.ult = 100;
+  actOnSide(apple, 'left', 'ultimate');
+  assert.strictEqual(apple.b.buffs.length, 0, 'Reality Distortion doit dissiper les buffs');
+  assert.ok(apple.history.find((h) => h.effects.some((e) => /dissipé/.test(e))), 'effet non tracé');
+  assert.ok(nvidiaRow);
+});
+
 test('chaque pouvoir spécial se déclenche sans erreur', () => {
   for (const brand of E.BRANDS) {
     const battle = E.createBattle(brand.id, 'intel', { rng: rngFrom(7) });

@@ -20,7 +20,8 @@
     auto: false,
     speed: 1,
     tournament: null,        // { order, index, wins }
-    shownRows: new Set()
+    shownRows: new Set(),
+    historyFilter: 'all'     // all | ult | crit | heal
   };
 
   const META_KEY = 'guerreDesMarques.meta.v1';
@@ -31,7 +32,7 @@
       const raw = localStorage.getItem(META_KEY);
       if (raw) return JSON.parse(raw);
     } catch (e) { /* stockage indisponible */ }
-    return { wins: 0, losses: 0, crits: 0, specials: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
+    return { wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
   }
   function saveMeta() {
     try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* ignore */ }
@@ -131,6 +132,9 @@
         '<div class="bcard__special"><b>' + b.special.icon + ' ' + esc(b.special.name) + '</b>' +
         '<span>' + esc(b.special.desc) + '</span>' +
         '<span class="bcard__cost">Coût : ' + b.special.cost + ' ⚡</span></div>' +
+        '<div class="bcard__ult"><b>✦ ' + esc(b.ultimate.name) + '</b>' +
+        '<span>' + esc(b.ultimate.desc) + '</span>' +
+        '<span class="bcard__cost">Ultime : 100 % de jauge</span></div>' +
         '</button>';
     }).join('');
   }
@@ -211,13 +215,18 @@
     });
 
     // Remise à zéro des panneaux
+    $('#history-list').className = 'history__list';
     $('#history-list').innerHTML = '<p class="history__empty">Aucune attaque pour l’instant.</p>';
     $('#history-count').textContent = '0 action';
+    $('#history-recap').innerHTML = '';
+    setHistoryFilter('all');
     $('#log-list').innerHTML = '';
     $('#ticker').textContent = 'Le combat commence…';
     $('#ticker').className = 'ticker';
     $('#special-name').textContent = battle.a.brand.special.name;
     $('#special-cost').textContent = battle.a.brand.special.cost;
+    $('#ultimate-name').textContent = battle.a.brand.ultimate.name;
+    $('#ultimate-cost').textContent = Engine.CFG.ULT_MAX;
     $('#announce').innerHTML = '';
     $('#ko-overlay').classList.remove('is-open');
     closeResult();
@@ -245,6 +254,7 @@
       const f = state.battle.fighters[side];
       paintHp(side);
       paintEnergy(side);
+      paintUlt(side);
       paintChips(side);
       $('#fighter-' + side).classList.toggle('is-turn', !!Engine.currentActor(state.battle) && Engine.currentActor(state.battle).side === side && state.battle.active);
     });
@@ -283,6 +293,21 @@
     $('#energy-txt-' + side).textContent = Math.round(f.energy) + ' / ' + Engine.CFG.ENERGY_MAX;
   }
 
+  function paintUlt(side) {
+    const f = state.battle.fighters[side];
+    const pct = Math.max(0, Math.min(100, f.ult / Engine.CFG.ULT_MAX * 100));
+    const bar = $('#ult-fill-' + side).parentElement;
+    const box = $('#ult-box-' + side);
+    const locked = f.ultCooldown > 0;
+    $('#ult-fill-' + side).style.width = pct + '%';
+    bar.classList.toggle('is-locked', locked);
+    bar.classList.toggle('is-full', pct >= 100 && !locked);
+    box.classList.toggle('is-ready', pct >= 100 && !locked);
+    const cdLabel = '⏳ ' + f.ultCooldown + ' tour' + (f.ultCooldown > 1 ? 's' : '');
+    $('#ult-lock-txt-' + side).textContent = cdLabel;
+    $('#ult-txt-' + side).textContent = locked ? cdLabel : Math.round(pct) + ' %';
+  }
+
   function paintChips(side) {
     const f = state.battle.fighters[side];
     const chips = [];
@@ -290,6 +315,8 @@
     if (f.defending) chips.push('<li class="chip">🛡️ Garde</li>');
     if (f.critGuaranteed > 0) chips.push('<li class="chip chip--warn">🎯 Critique ×' + f.critGuaranteed + '</li>');
     if (f.stun > 0) chips.push('<li class="chip chip--bad">💫 Étourdi ' + f.stun + '</li>');
+    if (f.ultCooldown > 0) chips.push('<li class="chip chip--bad">⏳ Recharge ultime ' + f.ultCooldown + '</li>');
+    if (f.ult >= Engine.CFG.ULT_MAX && f.ultCooldown <= 0) chips.push('<li class="chip chip--ult">✦ Ultime prêt</li>');
     f.buffs.forEach(function (b) {
       const tone = b.stat === 'defense' ? 'chip--good' : 'chip--warn';
       chips.push('<li class="chip ' + tone + '">' + (b.icon || '✦') + ' ' + esc(b.label) + ' (' + b.turns + ')</li>');
@@ -308,10 +335,18 @@
     const btnSpecial = $('#btn-special');
     btnSpecial.disabled = !playable || !specialReady;
     btnSpecial.classList.toggle('is-ready', specialReady);
+
+    const ultReady = playable && Engine.canUseUltimate(state.battle.fighters.left);
+    const btnUlt = $('#btn-ultimate');
+    btnUlt.disabled = !playable || !ultReady;
+    btnUlt.classList.toggle('is-ready', ultReady);
+
     const f = state.battle ? state.battle.fighters.left : null;
     if (f) {
       $('#special-name').textContent = f.brand.special.name;
       $('#special-cost').textContent = f.brand.special.cost;
+      $('#ultimate-name').textContent = f.brand.ultimate.name;
+      $('#ultimate-cost').textContent = Engine.CFG.ULT_MAX;
     }
   }
 
@@ -380,6 +415,69 @@
   function shakeArena() { restartAnim($('#arena'), 'is-shaking'); }
   function flashArena() { restartAnim($('#arena'), 'is-flashing'); }
 
+  /* Secousse légère de tout l'écran (hard = ultime / K.O.).
+     Une seule secousse à la fois : on annule la précédente pour qu'une rafale
+     d'impacts ne laisse pas un vieux minuteur éteindre la secousse en cours. */
+  let quakeTimer = null;
+  function quakeScreen(hard) {
+    if (quakeTimer) clearTimeout(quakeTimer);
+    document.body.classList.remove('is-quake', 'is-quake-hard');
+    void document.body.offsetWidth;                 // relance l'animation
+    document.body.classList.add(hard ? 'is-quake-hard' : 'is-quake');
+    quakeTimer = setTimeout(function () {
+      document.body.classList.remove('is-quake', 'is-quake-hard');
+      quakeTimer = null;
+    }, (hard ? 800 : 550) / state.speed);
+  }
+
+  /* --------- Cinématique d'ultime --------- */
+  async function playCinematic(ev) {
+    const cine = $('#cine');
+    const f = state.battle.fighters[ev.side];
+    const colors = ev.colors || ['#6c8cff', '#b06cff'];
+
+    cine.style.setProperty('--cine-a', colors[0]);
+    cine.style.setProperty('--cine-b', colors[1]);
+    cine.style.setProperty('--cine-x', ev.side === 'left' ? '24%' : '76%');
+    cine.dataset.fx = ev.fx || 'distort';
+    $('#cine-mono').textContent = f.brand.mono;
+    $('#cine-mono').style.color = 'transparent';
+    $('#cine-brand').textContent = f.name;
+    $('#cine-ult').textContent = ev.name;
+    $('#cine-phrase').textContent = ev.phrase || ev.desc || '';
+
+    // Éclats lumineux projetés depuis le centre
+    const shards = $('#cine-shards');
+    shards.innerHTML = '';
+    for (let i = 0; i < 20; i++) {
+      const s = document.createElement('i');
+      const angle = (Math.PI * 2 * i) / 20 + Math.random() * 0.3;
+      const dist = 220 + Math.random() * 420;
+      s.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+      s.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+      s.style.setProperty('--rot', (angle * 180 / Math.PI).toFixed(1) + 'deg');
+      s.style.animationDelay = (Math.random() * 0.25).toFixed(2) + 's';
+      shards.appendChild(s);
+    }
+
+    cine.classList.remove('is-open');
+    void cine.offsetWidth;
+    cine.classList.add('is-open');
+    cine.setAttribute('aria-hidden', 'false');
+    restartAnim($('#fighter-' + ev.side), 'is-charging');
+    SFX.play('ultimate');
+    quakeScreen(true);
+    sparks(ev.side, 26, colors[1]);
+    setTicker('✦ <b>' + esc(f.name) + '</b> déclenche son ULTIME : « ' + esc(ev.name) + ' » — ' + esc(ev.desc || ''));
+
+    await wait(1550);
+    cine.classList.remove('is-open');
+    cine.setAttribute('aria-hidden', 'true');
+    shards.innerHTML = '';
+    announce('ULTIME !', 'ult');
+    await wait(200);
+  }
+
   function confetti(count) {
     const colors = ['#6c8cff', '#b06cff', '#ff5f9e', '#3ddc97', '#ffc93c', '#37c8ff'];
     const host = document.body;
@@ -407,6 +505,46 @@
     return null;
   }
 
+  /* Bloc dépliable : impacts, PV restants, jauge d'ultime, effets */
+  function historyDetailHtml(row) {
+    const fighters = state.battle.fighters;
+    const nameOf = function (side) { return fighters[side].name; };
+    const lines = [];
+
+    if (row.detail) lines.push(['Impacts', row.detail]);
+    if (row.hits > 1 && row.critCount) lines.push(['Critiques', row.critCount + ' / ' + row.hits]);
+    if (row.dodgeCount) lines.push(['Esquives', row.dodgeCount + ' / ' + row.hits]);
+    if (row.heal > 0) lines.push(['Soin', '+' + row.heal + ' PV']);
+    if (row.blocked) lines.push(['Résultat', 'Absorbé par le bouclier']);
+    else if (row.dodged) lines.push(['Résultat', 'Esquive totale']);
+
+    const hpMini = ['left', 'right'].map(function (side) {
+      const hp = row.hpLeft ? row.hpLeft[side] : fighters[side].hp;
+      const pct = row.hpPct ? row.hpPct[side] : Math.round(hp / fighters[side].maxHp * 100);
+      return '<div class="hpmini hpmini--' + side + '">' +
+        '<span class="hpmini__name">' + esc(nameOf(side)) + '</span>' +
+        '<span class="hpmini__bar"><span class="hpmini__fill" style="width:' + Math.max(0, pct) + '%"></span></span>' +
+        '<span class="hpmini__num">' + hp + ' (' + pct + ' %)</span></div>';
+    }).join('');
+
+    const ult = row.ultAfter
+      ? '<div class="ultmini">Jauge ultime → <b>' + Math.round(row.ultAfter.left) + ' %</b> · <b>' +
+        Math.round(row.ultAfter.right) + ' %</b></div>'
+      : '';
+
+    const effects = (row.effects && row.effects.length)
+      ? '<div class="hrow__effects">' + row.effects.map(function (e) {
+        return '<span class="eff">' + esc(e) + '</span>';
+      }).join('') + '</div>'
+      : '';
+
+    return '<div class="hrow__detail">' +
+      '<dl><dt>Action</dt><dd>Round ' + row.round + ' · action n°' + row.index + '</dd>' +
+      lines.map(function (l) { return '<dt>' + esc(l[0]) + '</dt><dd>' + esc(l[1]) + '</dd>'; }).join('') +
+      '</dl>' + hpMini + ult + effects +
+      '</div>';
+  }
+
   function renderHistoryRow(row) {
     const list = $('#history-list');
     const empty = list.querySelector('.history__empty');
@@ -414,12 +552,14 @@
 
     const li = document.createElement('li');
     let cls = 'hrow hrow--' + row.actorSide;
-    if (row.crit) cls += ' hrow--crit';
-    else if (row.heal > 0) cls += ' hrow--heal';
+    if (row.actionKind === 'ultimate') cls += ' hrow--ult';
+    else if (row.crit) cls += ' hrow--crit';
+    else if (row.heal > 0 && row.damage === 0) cls += ' hrow--heal';
     else if (row.actionKind === 'control' || row.actionKind === 'buff' || row.actionKind === 'support') cls += ' hrow--control';
     li.className = cls;
 
     const tags = [];
+    if (row.actionKind === 'ultimate') tags.push('<span class="tag tag--ult">ULTIME</span>');
     if (row.crit) tags.push('<span class="tag tag--crit">CRITIQUE</span>');
     if (row.dodged) tags.push('<span class="tag tag--dodge">ESQUIVE</span>');
     if (row.blocked) tags.push('<span class="tag tag--block">BLOQUÉ</span>');
@@ -436,11 +576,50 @@
       '<span class="hrow__round">R' + row.round + '</span>' +
       '<span class="hrow__main"><b>' + esc(row.actor) + '</b> <span>→ ' + esc(row.action) +
       (row.target && row.target !== row.actor ? ' sur ' + esc(row.target) : '') + '</span></span>' +
-      '<span class="hrow__tags">' + tags.join('') + dmgHtml + '</span>';
+      '<span class="hrow__tags">' + tags.join('') + dmgHtml +
+      '<span class="hrow__caret" title="Voir le détail">▶</span></span>' +
+      historyDetailHtml(row);
 
     list.insertBefore(li, list.firstChild);   // plus récent en haut
     const count = state.battle.history.length;
     $('#history-count').textContent = count + (count > 1 ? ' actions' : ' action');
+    renderRecap();
+  }
+
+  /* Récapitulatif chiffré du combat, mis à jour à chaque action */
+  function renderRecap() {
+    const acc = { left: null, right: null };
+    ['left', 'right'].forEach(function (side) {
+      const f = state.battle.fighters[side];
+      acc[side] = { name: f.name, dmg: 0, taken: 0, crits: 0, ults: 0, heal: 0 };
+    });
+    state.battle.history.forEach(function (r) {
+      if (!acc[r.actorSide]) return;
+      const a = acc[r.actorSide];
+      a.dmg += r.damage || 0;
+      a.crits += r.critCount || (r.crit ? 1 : 0);
+      a.heal += r.heal || 0;
+      if (r.actionKind === 'ultimate') a.ults++;
+      const other = r.actorSide === 'left' ? 'right' : 'left';
+      if (acc[other]) acc[other].taken += r.damage || 0;
+    });
+    $('#history-recap').innerHTML = ['left', 'right'].map(function (side) {
+      const a = acc[side];
+      return '<div class="recap recap--' + side + '">' +
+        '<div class="recap__side"><span>' + esc(a.name) + '</span><b>' + a.dmg + '</b></div>' +
+        '<div class="recap__meta">' + a.crits + ' critique' + (a.crits > 1 ? 's' : '') +
+        ' · ' + a.ults + ' ultime' + (a.ults > 1 ? 's' : '') +
+        ' · +' + a.heal + ' PV · subi ' + a.taken + '</div></div>';
+    }).join('');
+  }
+
+  function setHistoryFilter(kind) {
+    state.historyFilter = kind || 'all';
+    const list = $('#history-list');
+    list.className = 'history__list' + (state.historyFilter === 'all' ? '' : ' is-filter-' + state.historyFilter);
+    document.querySelectorAll('#history-filters .filter-chip').forEach(function (b) {
+      b.classList.toggle('is-on', b.dataset.filter === state.historyFilter);
+    });
   }
 
   function pushLog(entry) {
@@ -491,8 +670,9 @@
         const attacker = $('#fighter-' + ev.side);
         const targetSide = ev.target;
         restartAnim(attacker, 'is-attacking');
-        SFX.play('swing');
-        await wait(150);
+        SFX.play(ev.ultimate ? 'ultimate' : 'swing');
+        if (ev.ultimate) quakeScreen(true);
+        await wait(ev.ultimate ? 240 : 150);
 
         for (let i = 0; i < ev.hits.length; i++) {
           const hit = ev.hits[i];
@@ -513,17 +693,24 @@
             if (hit.crit) {
               SFX.play('crit');
               ring(targetSide, true);
-              sparks(targetSide, 22, '#ffd447');
-              popDamage(targetSide, hit.damage + ' !', 'crit');
+              if (ev.ultimate) {
+                sparks(targetSide, 30, '#ff8ad0');
+                popDamage(targetSide, hit.damage + ' !!', 'ult');
+                setTicker('✦ ULTIME de <b>' + esc(battle.fighters[ev.side].name) + '</b> : ' + hit.damage + ' dégâts critiques !');
+              } else {
+                sparks(targetSide, 22, '#ffd447');
+                popDamage(targetSide, hit.damage + ' !', 'crit');
+                setTicker('💥 Coup critique de <b>' + esc(battle.fighters[ev.side].name) + '</b> : ' + hit.damage + ' dégâts !', 'crit');
+              }
               flashArena();
               shakeArena();
-              announce('CRITIQUE !', 'crit');
-              setTicker('💥 Coup critique de <b>' + esc(battle.fighters[ev.side].name) + '</b> : ' + hit.damage + ' dégâts !', 'crit');
+              quakeScreen(!!ev.ultimate);
+              announce(ev.ultimate ? 'ULTIME !' : 'CRITIQUE !', ev.ultimate ? 'ult' : 'crit');
             } else {
               SFX.play('hit');
               ring(targetSide, false);
               sparks(targetSide, 12, '#fff3c4');
-              popDamage(targetSide, String(hit.damage));
+              popDamage(targetSide, String(hit.damage), ev.ultimate ? 'ult' : '');
               setTicker('<b>' + esc(battle.fighters[ev.side].name) + '</b> touche ' + esc(battle.fighters[targetSide].name) + ' pour ' + hit.damage + ' dégâts.');
             }
             if (hit.heal) {
@@ -552,6 +739,68 @@
         setTicker('⚡ <b>' + esc(battle.fighters[ev.side].name) + '</b> déclenche « ' + esc(ev.name) + ' » — ' + esc(ev.desc));
         paintEnergy(ev.side);
         await wait(520);
+        break;
+
+      /* --------- Ultimes --------- */
+      case 'ultimateCast':
+        paintUlt(ev.side);
+        await playCinematic(ev);
+        paintUlt(ev.side);
+        refreshAll();
+        break;
+
+      case 'ult':
+        paintUlt(ev.side);
+        break;
+
+      case 'ultCooldown':
+        paintUlt(ev.side);
+        paintChips(ev.side);
+        break;
+
+      case 'ultReady':
+        paintUlt(ev.side);
+        paintChips(ev.side);
+        SFX.play('ultReady');
+        announce('✦ Ultime rechargé', 'special');
+        setTicker('✦ La jauge ultime de <b>' + esc(battle.fighters[ev.side].name) + '</b> est de nouveau active.');
+        await wait(220);
+        break;
+
+      case 'ultimateSupport':
+        renderHistoryRow(ev.row);
+        if (battle.logs.length) pushLog(battle.logs[battle.logs.length - 1]);
+        refreshAll();
+        await wait(260);
+        break;
+
+      case 'shieldBreak':
+        SFX.play('block');
+        ring(ev.target, true);
+        sparks(ev.target, 20, '#ffd447');
+        popDamage(ev.target, 'BOUCLIER BRISÉ', 'miss');
+        setTicker('💥 Le bouclier de <b>' + esc(battle.fighters[ev.target].name) + '</b> vole en éclats !');
+        refreshAll();
+        await wait(320);
+        break;
+
+      case 'strip':
+        SFX.play('buff');
+        sparks(ev.target, 14, '#b06cff');
+        popDamage(ev.target, 'DISSIPÉ', 'miss');
+        setTicker('🌀 ' + ev.count + ' effet(s) dissipé(s) sur <b>' + esc(battle.fighters[ev.target].name) + '</b>.');
+        refreshAll();
+        await wait(300);
+        break;
+
+      case 'recoil':
+        state.display[ev.side] = Math.max(0, state.display[ev.side] - ev.amount);
+        paintHp(ev.side);
+        popDamage(ev.side, '-' + ev.amount, 'recoil');
+        restartAnim($('#fighter-' + ev.side), 'is-hit');
+        SFX.play('hit');
+        setTicker('🔥 Surchauffe : <b>' + esc(battle.fighters[ev.side].name) + '</b> perd ' + ev.amount + ' PV.');
+        await wait(300);
         break;
 
       case 'defend':
@@ -644,6 +893,7 @@
         SFX.play('ko');
         flashArena();
         shakeArena();
+        quakeScreen(true);
         sparks(ev.side, 34, '#ff6b6b');
         setTicker('☠️ <b>' + esc(battle.fighters[ev.side].name) + '</b> est K.O. !', 'ko');
         if (battle.logs.length) pushLog(battle.logs[battle.logs.length - 1]);
@@ -673,6 +923,7 @@
 
     meta.crits += battle.stats.crits;
     meta.specials += battle.stats.specials;
+    meta.ultimates += battle.stats.ultimates;
     meta.bestDamage = Math.max(meta.bestDamage, battle.stats.maxDamage);
     if (!isAuto) {
       if (playerWon) {
@@ -722,6 +973,8 @@
       '<div><dt>Critiques</dt><dd>' + battle.stats.crits + '</dd></div>' +
       '<div><dt>Esquives</dt><dd>' + battle.stats.dodges + '</dd></div>' +
       '<div><dt>Spéciaux</dt><dd>' + battle.stats.specials + '</dd></div>' +
+      '<div><dt>Ultimes</dt><dd>' + battle.stats.ultimates + '</dd></div>' +
+      '<div><dt>Dégâts totaux</dt><dd>' + (battle.stats.damage.left + battle.stats.damage.right) + '</dd></div>' +
       '<div><dt>Meilleur coup</dt><dd>' + battle.stats.maxDamage + '</dd></div>';
 
     // Actions proposées
@@ -807,6 +1060,7 @@
       ['🔥', meta.bestStreak, 'Meilleure série'],
       ['💥', meta.crits, 'Coups critiques'],
       ['⚡', meta.specials, 'Pouvoirs lancés'],
+      ['✦', meta.ultimates, 'Ultimes lancés'],
       ['🎯', meta.bestDamage, 'Meilleur coup']
     ].map(function (s) {
       return '<div class="stat-card"><b>' + s[1] + '</b><span>' + s[0] + ' ' + s[2] + '</span></div>';
@@ -843,6 +1097,7 @@
     $('#btn-attack').addEventListener('click', function () { playerAction('attack'); });
     $('#btn-defend').addEventListener('click', function () { playerAction('defend'); });
     $('#btn-special').addEventListener('click', function () { playerAction('special'); });
+    $('#btn-ultimate').addEventListener('click', function () { playerAction('ultimate'); });
 
     $('#btn-speed').addEventListener('click', function () {
       state.speed = state.speed === 1 ? 2 : (state.speed === 2 ? 3 : 1);
@@ -868,12 +1123,30 @@
     });
 
     $('#btn-clear-history').addEventListener('click', function () {
-      $('#history-list').innerHTML = '<p class="history__empty">Liste vidée.</p>';
+      const list = $('#history-list');
+      list.innerHTML = '<p class="history__empty">Liste vidée.</p>';
+      list.className = 'history__list' + (state.historyFilter === 'all' ? '' : ' is-filter-' + state.historyFilter);
       $('#history-count').textContent = '0 action';
+      $('#history-recap').innerHTML = '';
+    });
+
+    // Filtres de l'historique
+    $('#history-filters').addEventListener('click', function (e) {
+      const chip = e.target.closest('.filter-chip');
+      if (!chip) return;
+      SFX.play('click');
+      setHistoryFilter(chip.dataset.filter);
+    });
+
+    // Clic sur une ligne : déplie le détail de l'action
+    $('#history-list').addEventListener('click', function (e) {
+      const row = e.target.closest('.hrow');
+      if (!row) return;
+      row.classList.toggle('is-open');
     });
 
     $('#btn-reset-stats').addEventListener('click', function () {
-      meta = { wins: 0, losses: 0, crits: 0, specials: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
+      meta = { wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
       saveMeta();
       renderStats();
     });
@@ -884,6 +1157,7 @@
       if (k === 'a') playerAction('attack');
       else if (k === 'd') playerAction('defend');
       else if (k === 's') playerAction('special');
+      else if (k === 'u') playerAction('ultimate');
       else if (k === 'm') $('#btn-sound').click();
       else if (e.code === 'Space') {
         e.preventDefault();
