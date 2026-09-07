@@ -6,6 +6,7 @@
 
   const Engine = window.BattleEngine;
   const Data = window.BRANDS_DATA;
+  const Progress = window.Progress;
 
   /* ------------------------- État ------------------------- */
   const state = {
@@ -22,7 +23,8 @@
     tournament: null,        // { order, index, wins }
     shownRows: new Set(),
     historyFilter: 'all',    // all | ult | crit | heal
-    cinematics: true         // cinématiques d'ultime longues (bouton 🎬)
+    cinematics: true,        // cinématiques d'ultime longues (bouton 🎬)
+    rewardToken: 0           // évite d'afficher des récompenses périmées
   };
 
   const META_KEY = 'guerreDesMarques.meta.v1';
@@ -44,11 +46,15 @@
   }
 
   function loadMeta() {
+    let data = null;
     try {
       const raw = localStorage.getItem(META_KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) data = JSON.parse(raw);
     } catch (e) { /* stockage indisponible */ }
-    return { wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
+    if (!data || typeof data !== 'object') {
+      data = { wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
+    }
+    return Progress.hydrate(data);      // complète les anciennes sauvegardes
   }
   function saveMeta() {
     try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* ignore */ }
@@ -77,12 +83,16 @@
 
   /* ------------------------- Navigation ------------------------- */
   function goto(screen) {
+    state.rewardToken++;          // annule un écran de récompenses en attente
+    closeRewards();
     state.screen = screen;
     document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('is-active'); });
     const el = $('#screen-' + screen);
     if (el) el.classList.add('is-active');
     if (screen === 'select') renderBrandGrid();
     if (screen === 'stats') renderStats();
+    if (screen === 'profil') renderProfil();
+    if (screen === 'menu') renderMenuProgress();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -93,6 +103,28 @@
         '" style="background:linear-gradient(135deg,' + b.colors[0] + ',' + b.colors[1] + ')">' +
         esc(b.mono) + '</span>';
     }).join('');
+    renderMenuProgress();
+  }
+
+  /* Bandeau de progression de l'accueil : rang, niveau global et barre d'XP */
+  function renderMenuProgress() {
+    const strip = $('#menu-progress');
+    if (!strip) return;
+    const lv = Progress.levelFromXp(meta.playerXp || 0);
+    const rank = Progress.rankFromLevel(lv.level);
+    const earned = Progress.trophiesOf(meta).filter(function (t) { return t.earned; }).length;
+
+    strip.style.setProperty('--rank-color', rank.rank.color);
+    $('#menu-rank-icon').textContent = rank.rank.icon;
+    $('#menu-rank-name').textContent = rank.rank.name;
+    $('#menu-level').innerHTML = 'Nv <b>' + lv.level + '</b>';
+    const fill = $('#menu-xp-fill');
+    fill.style.width = '0%';
+    setTimeout(function () { fill.style.width = (lv.maxed ? 100 : lv.pct) + '%'; }, 140);
+    $('#menu-progress-hint').textContent = (meta.battles || 0)
+      ? (meta.battles + ' combat' + (meta.battles > 1 ? 's' : '') + ' · ' + (meta.playerXp || 0) + ' PX · ' +
+         earned + ' trophée' + (earned > 1 ? 's' : '') + (rank.next ? ' · prochain rang : ' + rank.next.name : ''))
+      : 'Aucun combat disputé — lancez un duel !';
   }
 
   function startMode(mode) {
@@ -200,7 +232,15 @@
 
   /* ------------------------- Démarrage d'un combat ------------------------- */
   function startBattle(playerId, foeId) {
-    const battle = Engine.createBattle(playerId, foeId, { mode: state.mode });
+    state.rewardToken++;          // annule un écran de récompenses en attente
+    closeRewards();
+    const lvlA = Progress.brandState(meta, playerId).level;
+    const lvlB = Progress.brandState(meta, foeId).level;
+    const battle = Engine.createBattle(playerId, foeId, {
+      mode: state.mode,
+      left: { level: lvlA },
+      right: { level: lvlB }
+    });
     state.battle = battle;
     state.display.left = battle.a.hp;
     state.display.right = battle.b.hp;
@@ -214,8 +254,29 @@
     ['left', 'right'].forEach(function (side) {
       const f = battle.fighters[side];
       const b = f.brand;
-      $('#fighter-' + side).style.setProperty('--card-accent', b.accent);
-      $('#fighter-' + side).style.setProperty('--card-glow', b.glow);
+      const bState = Progress.brandState(meta, b.id);
+      const card = $('#fighter-' + side);
+      card.style.setProperty('--card-accent', b.accent);
+      card.style.setProperty('--card-glow', b.glow);
+      // Skin équipé (visuel uniquement)
+      Progress.SKINS.forEach(function (sk) { card.classList.remove(sk.css); });
+      card.classList.add(Progress.skinById(bState.skin).css);
+      const oldTag = card.querySelector('.skin-tag');
+      if (oldTag) oldTag.remove();
+      if (bState.skin !== 'base') {
+        const tag = document.createElement('span');
+        tag.className = 'skin-tag';
+        tag.textContent = Progress.skinById(bState.skin).name;
+        card.appendChild(tag);
+      }
+      // Rareté + niveau
+      const rarity = Progress.rarityOf(b.id);
+      const lvlBox = $('#lvl-' + side);
+      if (lvlBox) {
+        lvlBox.innerHTML =
+          '<span class="lvl">Nv <b>' + f.level + '</b></span>' +
+          '<span class="rarity rarity--' + rarity.id + '">' + rarity.icon + ' ' + rarity.name + '</span>';
+      }
       const badge = $('#badge-' + side);
       badge.textContent = b.mono;
       badge.style.background = 'linear-gradient(135deg,' + b.colors[0] + ',' + b.colors[1] + ')';
@@ -229,6 +290,7 @@
       clearClass($('#fighter-' + side), 'is-');
       $('#fx-' + side).innerHTML = '';
     });
+    closeRewards();
 
     // Remise à zéro des panneaux
     $('#history-list').className = 'history__list';
@@ -1018,26 +1080,17 @@
     const playerWon = !!winner && winner.side === 'left';
     const isAuto = state.mode === 'auto';
 
-    meta.crits += battle.stats.crits;
-    meta.specials += battle.stats.specials;
-    meta.ultimates += battle.stats.ultimates;
-    meta.bestDamage = Math.max(meta.bestDamage, battle.stats.maxDamage);
-    if (!isAuto) {
-      if (playerWon) {
-        meta.wins++;
-        meta.streak++;
-        meta.bestStreak = Math.max(meta.bestStreak, meta.streak);
-      } else {
-        meta.losses++;
-        meta.streak = 0;
-      }
-    }
     meta.duels.unshift({
       player: battle.a.name, foe: battle.b.name,
       winner: winner ? winner.name : 'égalité',
       rounds: battle.round, mode: state.mode, at: Date.now()
     });
     meta.duels = meta.duels.slice(0, 12);
+
+    // Progression : XP, niveaux, skins, badges, trophées et rang
+    const champion = state.mode === 'tournament' && playerWon && !!state.tournament &&
+      state.tournament.index + 1 >= state.tournament.order.length;
+    const reward = grantRewards(battle, champion);
     saveMeta();
 
     if (playerWon) { SFX.play('win'); confetti(70); }
@@ -1119,6 +1172,198 @@
 
     $('#result-overlay').classList.add('is-open');
     $('#result-overlay').setAttribute('aria-hidden', 'false');
+
+    // Écran de récompenses : il se superpose au panneau de résultat
+    const token = ++state.rewardToken;
+    setTimeout(function () {
+      if (token !== state.rewardToken || !state.battle || state.battle !== battle) return;
+      showRewards(reward);
+    }, 900 / state.speed);
+  }
+
+  /* ------------------------- Progression : récompenses ------------------------- */
+
+  /* Calcule et enregistre l'XP du combat (le panneau reste affiché derrière) */
+  function grantRewards(battle, champion) {
+    const a = battle.a, b = battle.b;
+    const winner = battle.winner;
+    const loser = winner === battle.a ? battle.b : battle.a;
+    const isAuto = state.mode === 'auto';
+    const playerWon = !!winner && winner.side === 'left';
+
+    const payload = {
+      mode: state.mode,
+      playerBrand: a.brand.id,
+      foeBrand: b.brand.id,
+      won: isAuto ? null : playerWon,
+      rounds: battle.round,
+      crits: battle.stats.crits,
+      specials: battle.stats.specials,
+      ultimates: battle.stats.ultimates,
+      maxDamage: winner ? battle.stats.maxHit[winner.side] || battle.stats.maxDamage : battle.stats.maxDamage,
+      ko: battle.endReason === 'ko',
+      koBy: winner ? winner.brand.id : null,
+      koOn: loser ? loser.brand.id : null,
+      tournamentWin: !!champion,
+      ultimatesByBrand: {},
+      maxDamageByBrand: {}
+    };
+    payload.ultimatesByBrand[a.brand.id] = a.ultUsed || 0;
+    payload.ultimatesByBrand[b.brand.id] = b.ultUsed || 0;
+    payload.maxDamageByBrand[a.brand.id] = battle.stats.maxHit.left;
+    payload.maxDamageByBrand[b.brand.id] = battle.stats.maxHit.right;
+
+    return Progress.applyBattleResult(meta, payload);
+  }
+
+  /* Barre d'XP animée : remplissage, puis remise à zéro à chaque montée de niveau */
+  function animateXpBar(fill, fromPct, toPct, levels) {
+    fill.style.transition = 'none';
+    fill.style.width = Math.max(0, Math.min(100, fromPct)) + '%';
+    void fill.offsetWidth;
+    fill.style.transition = '';
+    let delay = 260 / state.speed;
+    for (let i = 0; i < levels; i++) {
+      setTimeout(function () { fill.style.width = '100%'; }, delay);
+      delay += 520 / state.speed;
+      setTimeout(function () {
+        fill.style.transition = 'none';
+        fill.style.width = '0%';
+        void fill.offsetWidth;
+        fill.style.transition = '';
+      }, delay);
+      delay += 140 / state.speed;
+    }
+    setTimeout(function () { fill.style.width = Math.max(0, Math.min(100, toPct)) + '%'; }, delay);
+    return delay;
+  }
+
+  function xpRow(opts) {
+    const before = opts.before, after = opts.after;
+    const levels = Math.max(0, after.level - before.level);
+    const row = document.createElement('div');
+    row.className = 'xprow';
+    const mono = opts.mono
+      ? '<span class="xprow__mono" style="background:linear-gradient(135deg,' + opts.colors[0] + ',' + opts.colors[1] + ')">' +
+        esc(opts.mono) + '</span>'
+      : '<span class="xprow__mono" style="background:linear-gradient(135deg,#6c8cff,#b06cff)">✦</span>';
+    row.innerHTML =
+      '<div class="xprow__top"><b>' + mono + esc(opts.label) + '</b>' +
+      '<span>Nv ' + before.level + (levels ? ' → ' + after.level : '') +
+      ' · <span class="xprow__gain">+' + opts.gain + ' PX</span></span></div>' +
+      '<div class="bar bar--xp"><div class="bar__fill" style="width:' + before.pct + '%"></div></div>';
+    return { el: row, fill: row.querySelector('.bar__fill'), before: before, after: after, levels: levels };
+  }
+
+  function showRewards(report) {
+    const overlay = $('#rewards-overlay');
+    $('#rewards-xp').textContent = report.xp;
+
+    $('#rewards-parts').innerHTML = report.xpParts.map(function (p) {
+      return '<li><span>' + esc(p.label) + '</span><b>+' + p.value + '</b></li>';
+    }).join('');
+
+    /* --- Barres d'XP (joueur + marques du combat) --- */
+    const bars = $('#rewards-bars');
+    bars.innerHTML = '';
+    const rows = [];
+
+    const playerBeforeXp = Math.max(0, (meta.playerXp || 0) - report.xp);
+    rows.push(xpRow({
+      label: 'Niveau global', mono: null, colors: ['#6c8cff', '#b06cff'],
+      before: Progress.levelFromXp(playerBeforeXp),
+      after: Progress.levelFromXp(meta.playerXp || 0),
+      gain: report.xp
+    }));
+
+    report.brands.forEach(function (b) {
+      const brand = Data.getBrand(b.id);
+      const beforeXp = Math.max(0, b.after.xp - report.xp);
+      rows.push(xpRow({
+        label: brand.name, mono: brand.mono, colors: brand.colors,
+        before: Progress.levelFromXp(beforeXp),
+        after: b.after,
+        gain: report.xp
+      }));
+    });
+
+    let maxDelay = 0;
+    rows.forEach(function (r) {
+      bars.appendChild(r.el);
+      maxDelay = Math.max(maxDelay, animateXpBar(r.fill, r.before.pct, r.after.pct, r.levels));
+    });
+
+    /* --- « LEVEL UP ! » --- */
+    // Le niveau global d'abord, puis les marques du combat
+    const levelUps = report.levelUps.slice().sort(function (x, y) {
+      return (x.kind === 'player' ? 0 : 1) - (y.kind === 'player' ? 0 : 1);
+    });
+    levelUps.forEach(function (up, i) {
+      setTimeout(function () {
+        const el = document.createElement('div');
+        el.className = 'levelup';
+        el.innerHTML = 'LEVEL UP !<small>' + esc(up.name) + ' — niveau ' + up.to + '</small>';
+        $('#rewards-unlocks').appendChild(el);
+        if (!state.cinematics) return;
+        SFX.play('buff');
+        announce('NIVEAU ' + up.to + ' !', 'ult');
+      }, (maxDelay + 120 + i * 420) / state.speed);
+    });
+
+    /* --- Déblocages --- */
+    const unlocks = $('#rewards-unlocks');
+    unlocks.innerHTML = '';
+    report.newSkins.forEach(function (sk) {
+      const el = document.createElement('div');
+      el.className = 'unlock';
+      el.innerHTML = '<span class="unlock__icon">🎨</span><span><span class="unlock__label">Nouveau skin · ' +
+        esc(sk.brandName) + '</span><br><span class="unlock__name">' + esc(sk.name) + '</span></span>';
+      unlocks.appendChild(el);
+    });
+    report.newBadges.forEach(function (bd) {
+      const el = document.createElement('div');
+      el.className = 'unlock';
+      el.innerHTML = '<span class="unlock__icon">' + bd.icon + '</span><span><span class="unlock__label">Badge · ' +
+        esc(bd.brandName) + '</span><br><span class="unlock__name">' + esc(bd.name) + '</span></span>';
+      unlocks.appendChild(el);
+    });
+    report.newTrophies.forEach(function (t) {
+      const el = document.createElement('div');
+      el.className = 'unlock';
+      el.innerHTML = '<span class="unlock__icon">' + t.icon + '</span><span><span class="unlock__label">Trophée</span><br>' +
+        '<span class="unlock__name">' + esc(t.name) + '</span></span>';
+      unlocks.appendChild(el);
+    });
+
+    /* --- Rang --- */
+    const rank = report.rank;
+    const rankBox = $('#rewards-rank');
+    rankBox.innerHTML =
+      '<div class="xprow__top"><b>' + rank.after.rank.icon + ' ' + esc(rank.after.rank.name) + '</b>' +
+      '<span>' + (rank.after.next ? 'prochain : ' + esc(rank.after.next.name) : 'rang maximum') + '</span></div>' +
+      '<div class="bar bar--rank" style="--rank-color:' + rank.after.rank.color + '">' +
+      '<div class="bar__fill" id="rewards-rank-fill" style="width:0%"></div></div>';
+    const rankFill = $('#rewards-rank-fill');
+    setTimeout(function () { rankFill.style.width = rank.after.pct + '%'; }, 200 / state.speed);
+    if (rank.up) {
+      setTimeout(function () {
+        const el = document.createElement('div');
+        el.className = 'levelup';
+        el.innerHTML = 'NOUVEAU RANG !<small>' + esc(rank.after.rank.name) + '</small>';
+        unlocks.appendChild(el);
+        SFX.play('win');
+      }, 700 / state.speed);
+    }
+
+    overlay.classList.add('is-open');
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeRewards() {
+    const overlay = $('#rewards-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('is-open');
+    overlay.setAttribute('aria-hidden', 'true');
   }
 
   function closeResult() {
@@ -1174,6 +1419,138 @@
         '<span>' + esc(d.player) + ' vs ' + esc(d.foe) + '</span>' +
         '<small>' + esc(d.winner) + ' · ' + d.rounds + 'R</small></li>';
     }).join('');
+  }
+
+  /* ------------------------- Écran Profil ------------------------- */
+
+  /* Marque la plus jouée (victoires, puis utilisations) */
+  function favoriteBrand() {
+    let best = null, bestScore = -1;
+    Progress.allBrandStates(meta).forEach(function (st) {
+      const score = st.wins * 1000 + st.uses;
+      if (st.uses > 0 && score > bestScore) { bestScore = score; best = st; }
+    });
+    return best;
+  }
+
+  function renderProfil() {
+    const lv = Progress.levelFromXp(meta.playerXp || 0);
+    const rank = Progress.rankFromLevel(lv.level);
+
+    const card = $('#rank-card');
+    card.style.setProperty('--rank-color', rank.rank.color);
+    $('#rank-icon').textContent = rank.rank.icon;
+    $('#rank-name').textContent = rank.rank.name;
+    $('#rank-fill').style.width = rank.pct + '%';
+    $('#rank-next').textContent = rank.next
+      ? 'Prochain rang : ' + rank.next.name + ' au niveau ' + rank.next.level +
+        ' (encore ' + rank.remaining + ' niveau' + (rank.remaining > 1 ? 'x' : '') + ')'
+      : 'Rang maximum atteint — respect 🏆';
+
+    $('#level-badge').textContent = 'Nv ' + lv.level;
+    $('#level-xp-txt').textContent = lv.maxed ? 'MAX' : lv.into + ' / ' + lv.needed + ' PX';
+    const fill = $('#level-xp-fill');
+    fill.style.width = (lv.maxed ? 100 : 0) + '%';
+    setTimeout(function () { fill.style.width = lv.pct + '%'; }, 120);
+    $('#level-hint').textContent = lv.maxed
+      ? 'Niveau maximum — légende absolue'
+      : (Progress.xpToReach(lv.level + 1) - (meta.playerXp || 0)) + ' PX avant le niveau ' + (lv.level + 1);
+
+    /* --- Statistiques --- */
+    const total = meta.wins + meta.losses;
+    const rate = total ? Math.round(meta.wins / total * 100) : 0;
+    const fav = favoriteBrand();
+    const favName = fav ? Data.getBrand(fav.id).name : '—';
+    const favSub = fav ? fav.wins + 'V / ' + fav.losses + 'D · Nv ' + fav.level : 'aucun combat';
+    const ko = meta.bestKo;
+    const koName = (ko && ko.brand && Data.getBrand(ko.brand)) ? Data.getBrand(ko.brand).name : null;
+
+    $('#profil-stats').innerHTML = [
+      ['⚔️', meta.battles || 0, 'Combats'],
+      ['🏆', meta.wins, 'Victoires'],
+      ['💀', meta.losses, 'Défaites'],
+      ['📈', rate + ' %', 'Taux de victoire'],
+      ['⭐', favName, 'Marque favorite', favSub],
+      ['💥', ko ? ko.damage : (meta.bestDamage || 0), 'Meilleur K.O.', koName ? 'par ' + koName : '—'],
+      ['✦', meta.ultimates || 0, 'Ultimes lancés'],
+      ['🔥', meta.streak || 0, 'Série en cours', 'record ' + (meta.bestStreak || 0)]
+    ].map(function (s) {
+      return '<div class="stat-card"><b>' + esc(s[1]) + '</b><span>' + s[0] + ' ' + esc(s[2]) + '</span>' +
+        (s[3] ? '<small>' + esc(s[3]) + '</small>' : '') + '</div>';
+    }).join('');
+
+    /* --- Trophées --- */
+    const trophies = Progress.trophiesOf(meta);
+    const earned = trophies.filter(function (t) { return t.earned; }).length;
+    $('#trophy-count').textContent = earned + ' / ' + trophies.length;
+    $('#trophy-grid').innerHTML = trophies.map(function (t) {
+      return '<div class="trophy' + (t.earned ? ' is-earned' : '') + '" title="' + esc(t.desc) + '">' +
+        '<span class="trophy__icon">' + t.icon + '</span>' +
+        '<span><span class="trophy__name">' + esc(t.name) + '</span>' +
+        '<span class="trophy__desc">' + esc(t.desc) + '</span></span></div>';
+    }).join('');
+
+    /* --- Écurie --- */
+    $('#roster-list').innerHTML = Progress.allBrandStates(meta).map(function (st) {
+      const b = Data.getBrand(st.id);
+      const rarity = Progress.rarityOf(st.id);
+      const nextSk = Progress.nextSkin(st.level);
+      const skins = Progress.SKINS.map(function (sk) {
+        const unlocked = st.level >= sk.level;
+        const equipped = st.skin === sk.id;
+        return '<span class="skin-chip' + (unlocked ? ' is-unlocked' : '') + (equipped ? ' is-equipped' : '') +
+          '" data-brand="' + st.id + '" data-skin="' + sk.id + '" role="button" tabindex="' + (unlocked ? '0' : '-1') +
+          '" title="' + esc(sk.name) + (unlocked ? ' — ' + esc(sk.desc) : ' — niveau ' + sk.level) + '">' +
+          (unlocked ? esc(sk.name) : '🔒 ' + sk.level) + '</span>';
+      }).join('');
+      const badges = st.badges.map(function (bd) {
+        return '<span class="mbadge' + (bd.earned ? ' is-earned' : '') + '" title="' + esc(bd.name) + ' — ' +
+          esc(bd.desc) + '">' + bd.icon + '</span>';
+      }).join('');
+      return '<article class="rcard">' +
+        '<div class="rcard__head">' +
+          '<span class="rcard__mono" style="background:linear-gradient(135deg,' + b.colors[0] + ',' + b.colors[1] + ')">' +
+            esc(b.mono) + '</span>' +
+          '<span class="rcard__id">' +
+            '<h4 class="rcard__name">' + esc(b.name) + '</h4>' +
+            '<span class="rcard__meta">' +
+              '<span class="lvl">Nv <b>' + st.level + '</b></span>' +
+              '<span class="rarity rarity--' + rarity.id + '">' + rarity.icon + ' ' + rarity.name + '</span>' +
+            '</span>' +
+            '<span class="rcard__xp">' + st.wins + 'V / ' + st.losses + 'D · ' + st.uses + ' combats · ' +
+              (st.maxed ? 'MAX' : st.into + '/' + st.needed + ' PX') + '</span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="bar bar--xp"><div class="bar__fill xprow__fill" style="width:' + st.pct + '%"></div></div>' +
+        '<div class="skins">' + skins + '</div>' +
+        '<div class="badges">' + badges + '</div>' +
+        (nextSk ? '<span class="rcard__xp" style="margin-top:8px">Prochain skin : ' + esc(nextSk.name) +
+          ' au niveau ' + nextSk.level + '</span>' : '') +
+        '</article>';
+    }).join('');
+  }
+
+  /* Équiper un skin (visuel uniquement, depuis la page Profil) */
+  function equipSkin(brandId, skinId) {
+    const st = Progress.brandState(meta, brandId);
+    if (!Progress.isSkinUnlocked(skinId, st.level)) { SFX.play('block'); return; }
+    meta.brands = meta.brands || {};
+    if (!meta.brands[brandId]) meta.brands[brandId] = { xp: 0, wins: 0, losses: 0, uses: 0, ultimates: 0, bestDamage: 0, skin: 'base' };
+    meta.brands[brandId].skin = skinId;
+    saveMeta();
+    SFX.play('click');
+    renderProfil();
+  }
+
+  /* Remise à zéro de la progression (les palmarès « historique » sont conservés) */
+  function resetProgress() {
+    if (!window.confirm('Réinitialiser toute la progression ?\nNiveaux, XP, skins, badges et trophées seront perdus.')) return;
+    const duels = meta.duels || [];
+    meta = Progress.hydrate(Progress.emptyProgress());
+    meta.duels = duels;
+    saveMeta();
+    renderProfil();
+    announce('Progression réinitialisée', 'round');
   }
 
   /* ------------------------- Événements UI ------------------------- */
@@ -1250,6 +1627,28 @@
       row.classList.toggle('is-open');
     });
 
+    /* --- Progression --- */
+    $('#btn-reset-progress').addEventListener('click', resetProgress);
+
+    $('#roster-list').addEventListener('click', function (e) {
+      const chip = e.target.closest('.skin-chip');
+      if (chip && chip.dataset.brand) equipSkin(chip.dataset.brand, chip.dataset.skin);
+    });
+    $('#roster-list').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const chip = e.target.closest && e.target.closest('.skin-chip');
+      if (!chip || !chip.dataset.brand) return;
+      e.preventDefault();
+      equipSkin(chip.dataset.brand, chip.dataset.skin);
+    });
+
+    $('#btn-rewards-continue').addEventListener('click', function () {
+      SFX.resume(); SFX.play('click');
+      closeRewards();
+      if (state.screen === 'profil') renderProfil();
+      else renderMenuRoster();
+    });
+
     $('#btn-reset-stats').addEventListener('click', function () {
       meta = { wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0, bestDamage: 0, streak: 0, bestStreak: 0, duels: [] };
       saveMeta();
@@ -1264,7 +1663,13 @@
       else if (k === 's') playerAction('special');
       else if (k === 'u') playerAction('ultimate');
       else if (k === 'm') $('#btn-sound').click();
+      else if (k === 'escape') closeRewards();
       else if (e.code === 'Space') {
+        if ($('#rewards-overlay').classList.contains('is-open')) {
+          e.preventDefault();
+          $('#btn-rewards-continue').click();
+          return;
+        }
         e.preventDefault();
         if ($('#result-overlay').classList.contains('is-open')) {
           const first = $('#result-actions .btn');

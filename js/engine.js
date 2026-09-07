@@ -39,7 +39,9 @@
     ULT_DEFEND: 12,          // ultime gagné en se défendant
     ULT_ROUND: 4,            // ultime passif par round
     ULT_COOLDOWN: 2,         // tours de recharge après un ultime (jauge bloquée)
-    MAX_ROUNDS: 40           // mort subite au-delà
+    MAX_ROUNDS: 40,          // mort subite au-delà
+    LEVEL_MAX: 100,          // niveau maximum d'une marque (progression)
+    LEVEL_STAT_GROWTH: 0.2   // +20 % de statistiques entre le niveau 1 et 100
   };
 
   const clamp = function (v, min, max) { return v < min ? min : (v > max ? max : v); };
@@ -85,11 +87,19 @@
 
   /* ------------------- Combattants ------------------- */
 
+  /* Croissance des statistiques avec le niveau de la marque (progression).
+     Sans niveau fourni (combats de test, IA du tournoi…) : aucun changement. */
+  function levelGrowth(level) {
+    const l = clamp(level || 1, 1, CFG.LEVEL_MAX);
+    return 1 + (CFG.LEVEL_STAT_GROWTH * (l - 1)) / (CFG.LEVEL_MAX - 1);
+  }
+
   function createFighter(brandOrId, side, opts) {
     const brand = typeof brandOrId === 'string' ? getBrand(brandOrId) : brandOrId;
     if (!brand) throw new Error('Marque inconnue : ' + brandOrId);
     opts = opts || {};
-    const scale = opts.scale || 1;
+    const growth = levelGrowth(opts.level);
+    const scale = (opts.scale || 1) * growth;
     return {
       side: side,                                   // 'left' | 'right'
       brand: brand,
@@ -102,6 +112,7 @@
         vitesse: Math.round(brand.stats.vitesse * scale)
       },
       energy: 0,
+      level: Math.max(1, Math.min(CFG.LEVEL_MAX, Math.round(opts.level || 1))),
       ult: 0,             // jauge d'ultime (0 → 100)
       ultCooldown: 0,     // tours de recharge restants
       ultUsed: 0,         // nombre d'ultimes déjà lancés
@@ -166,7 +177,11 @@
       history: [],   // historique détaillé des attaques
       logs: [],      // journal texte
       rng: opts.rng || Math.random,
-      stats: { crits: 0, dodges: 0, specials: 0, ultimates: 0, maxDamage: 0, damage: { left: 0, right: 0 } }
+      stats: {
+        crits: 0, dodges: 0, specials: 0, ultimates: 0, maxDamage: 0,
+        damage: { left: 0, right: 0 },   // dégâts cumulés par camp
+        maxHit: { left: 0, right: 0 }    // plus gros coup porté par camp
+      }
     };
     battle.fighters = { left: battle.a, right: battle.b };
     newRound(battle, true);
@@ -281,6 +296,7 @@
     }
 
     if (total > battle.stats.maxDamage) battle.stats.maxDamage = total;
+    if (total > battle.stats.maxHit[attacker.side]) battle.stats.maxHit[attacker.side] = total;
     battle.stats.damage[attacker.side] += total;
     if (special) battle.stats.specials++;
 
@@ -792,6 +808,7 @@
     createFighter: createFighter,
     currentActor: currentActor,
     opponentOf: opponentOf,
+    levelGrowth: levelGrowth,
     canUseSpecial: canUseSpecial,
     canUseUltimate: canUseUltimate,
     gainUlt: gainUlt,

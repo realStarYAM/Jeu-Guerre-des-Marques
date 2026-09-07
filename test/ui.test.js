@@ -31,13 +31,14 @@ test.before(async () => {
 
 test.after(() => { if (server) server.close(); });
 
-async function openGame() {
+async function openGame(beforeParse, url) {
   const virtualConsole = new VirtualConsole();      // on ignore les "Not implemented" de jsdom
-  return JSDOM.fromURL(base + 'index.html', {
+  return JSDOM.fromURL((url || base) + 'index.html', {
     runScripts: 'dangerously',
     resources: 'usable',
     pretendToBeVisual: true,
-    virtualConsole
+    virtualConsole,
+    beforeParse: beforeParse
   });
 }
 
@@ -447,6 +448,191 @@ test('interface : le tournoi enchaîne les combats et affiche le parcours', { ti
     assert.strictEqual(doc.querySelectorAll('#bracket-list .bstep--done').length, 0, 'le parcours ne doit pas avancer après une défaite');
   }
   assert.notStrictEqual(doc.querySelector('#hp-now-left').textContent, '0', 'les PV doivent être restaurés au combat suivant');
+
+  dom.window.close();
+});
+
+/* ============================================================
+   PROGRESSION — écran de récompenses et page Profil
+   ============================================================ */
+
+const BRAND_IDS = ['apple', 'samsung', 'xiaomi', 'huawei', 'google', 'microsoft', 'sony', 'nintendo', 'amd', 'nvidia', 'intel'];
+const META_KEY = 'guerreDesMarques.meta.v1';
+
+/* Sauvegarde de progression prête à l'emploi (avant exécution des scripts) */
+function seedProgress(window, brand) {
+  const brands = {};
+  BRAND_IDS.forEach(function (id) {
+    brands[id] = { xp: 0, wins: 0, losses: 0, uses: 0, ultimates: 0, bestDamage: 0, skin: 'base' };
+  });
+  brands[brand] = { xp: 3000, wins: 12, losses: 3, uses: 20, ultimates: 9, bestDamage: 180, skin: 'base' };
+  window.localStorage.setItem(META_KEY, JSON.stringify({
+    battles: 40, wins: 25, losses: 15, crits: 30, specials: 12, ultimates: 20,
+    bestDamage: 210, streak: 3, bestStreak: 7, duels: [], playerXp: 3000,
+    bestKo: { damage: 260, brand: brand, foe: 'intel', at: Date.now() },
+    tournamentWin: true, brands: brands
+  }));
+}
+
+test('progression : la page Profil affiche rang, niveau, trophées et écurie', { timeout: 60000 }, async () => {
+  const dom = await openGame(function (w) { seedProgress(w, 'apple'); });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  // Bandeau de progression de l'accueil
+  assert.strictEqual(doc.querySelector('#menu-rank-name').textContent, 'Maître', 'bandeau de progression absent');
+  assert.strictEqual(doc.querySelector('#menu-rank-icon').textContent, '🔮', 'icône de rang absente du bandeau');
+  assert.match(doc.querySelector('#menu-level').textContent, /Nv 43/, 'niveau absent du bandeau');
+  assert.match(doc.querySelector('#menu-progress-hint').textContent, /40 combats/, 'résumé du bandeau absent');
+
+  click(doc, '#goto-profil');
+  await waitFor(dom, () => doc.querySelector('#screen-profil').classList.contains('is-active'), 5000, 'écran profil');
+
+  // Rang : 3000 PX → niveau 43 → Maître
+  assert.strictEqual(doc.querySelector('#rank-name').textContent, 'Maître', 'rang incorrect');
+  assert.strictEqual(doc.querySelector('#rank-icon').textContent, '🔮');
+  assert.match(doc.querySelector('#rank-next').textContent, /Grand Maître/, 'prochain rang absent');
+  assert.match(doc.querySelector('#rank-fill').style.width, /%$/, 'barre de rang non remplie');
+
+  // Niveau global
+  assert.strictEqual(doc.querySelector('#level-badge').textContent, 'Nv 43', 'niveau global incorrect');
+  assert.match(doc.querySelector('#level-xp-txt').textContent, /PX/, 'compteur de PX absent');
+  assert.match(doc.querySelector('#level-hint').textContent, /avant le niveau 44/, 'reste avant niveau supérieur absent');
+
+  // Statistiques du joueur
+  const stats = Array.from(doc.querySelectorAll('#profil-stats .stat-card')).map((c) => c.textContent);
+  assert.strictEqual(stats.length, 8, 'cartes de statistiques du profil manquantes');
+  assert.ok(stats.some((t) => /Combats/.test(t) && /40/.test(t)), 'nombre de combats absent');
+  assert.ok(stats.some((t) => /Taux de victoire/.test(t) && /63 %/.test(t)), 'taux de victoire absent');
+  assert.ok(stats.some((t) => /Marque favorite/.test(t) && /Apple/.test(t)), 'marque favorite absente');
+  assert.ok(stats.some((t) => /Meilleur K\.O\./.test(t) && /260/.test(t)), 'meilleur K.O. absent');
+  assert.ok(stats.some((t) => /Ultimes lancés/.test(t) && /20/.test(t)), 'ultimes lancés absents');
+  assert.ok(stats.some((t) => /Série en cours/.test(t) && /record 7/.test(t)), 'série de victoires absente');
+
+  // Trophées : 6 débloqués sur 12 avec cette sauvegarde
+  assert.strictEqual(doc.querySelectorAll('#trophy-grid .trophy').length, 12, 'grille de trophées incomplète');
+  assert.strictEqual(doc.querySelectorAll('#trophy-grid .trophy.is-earned').length, 6, 'trophées débloqués incorrects');
+  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '6 / 12', 'compteur de trophées incorrect');
+
+  // Écurie : 11 marques, raretés, skins et badges de maîtrise
+  assert.strictEqual(doc.querySelectorAll('#roster-list .rcard').length, 11, 'écurie incomplète');
+  assert.strictEqual(doc.querySelectorAll('#roster-list .rarity').length, 11, 'raretés manquantes');
+  assert.strictEqual(doc.querySelectorAll('#roster-list .mbadge').length, 99, 'badges de maîtrise manquants');
+  const appleCard = doc.querySelector('#roster-list .rcard');
+  assert.match(appleCard.textContent, /Apple/, 'première carte de l’écurie incorrecte');
+  assert.match(appleCard.querySelector('.rcard__meta .lvl').textContent, /Nv 43/, 'niveau de la marque absent');
+  assert.match(appleCard.querySelector('.rcard__xp').textContent, /12V \/ 3D/, 'bilan de la marque absent');
+  assert.ok(appleCard.querySelectorAll('.mbadge.is-earned').length >= 3, 'badges gagnés avec Apple manquants');
+
+  // Skins : 4 débloqués au niveau 43 (Standard, Néon, Chrome, Prisme), 3 verrouillés
+  const chips = appleCard.querySelectorAll('.skin-chip');
+  assert.strictEqual(chips.length, 7, 'liste de skins incomplète');
+  assert.strictEqual(appleCard.querySelectorAll('.skin-chip.is-unlocked').length, 4, 'skins débloqués incorrects');
+  assert.strictEqual(appleCard.querySelectorAll('.skin-chip.is-equipped').length, 1, 'skin équipé non marqué');
+
+  dom.window.close();
+});
+
+test('progression : équiper un skin depuis le profil met à jour la sauvegarde', { timeout: 60000 }, async () => {
+  const dom = await openGame(function (w) { seedProgress(w, 'apple'); });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#goto-profil');
+  await waitFor(dom, () => doc.querySelectorAll('#roster-list .skin-chip').length > 0, 5000, 'écurie');
+
+  const chip = Array.from(doc.querySelectorAll('#roster-list .skin-chip'))
+    .find((c) => c.dataset.brand === 'apple' && c.dataset.skin === 'chrome');
+  assert.ok(chip, 'skin Chrome introuvable');
+  assert.ok(chip.classList.contains('is-unlocked'), 'skin Chrome devrait être débloqué');
+  chip.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+
+  await waitFor(dom, () => {
+    const raw = dom.window.localStorage.getItem(META_KEY);
+    return raw && JSON.parse(raw).brands.apple.skin === 'chrome';
+  }, 5000, 'sauvegarde du skin');
+
+  const equipped = doc.querySelector('#roster-list .skin-chip.is-equipped[data-brand="apple"]');
+  assert.strictEqual(equipped.dataset.skin, 'chrome', 'skin équipé non mis en évidence');
+
+  // Un skin verrouillé ne peut pas être équipé
+  const locked = Array.from(doc.querySelectorAll('#roster-list .skin-chip'))
+    .find((c) => c.dataset.brand === 'apple' && c.dataset.skin === 'myth');
+  assert.ok(locked && !locked.classList.contains('is-unlocked'), 'skin Mythique devrait être verrouillé');
+  locked.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  await tick(120);
+  assert.strictEqual(JSON.parse(dom.window.localStorage.getItem(META_KEY)).brands.apple.skin, 'chrome',
+    'un skin verrouillé ne doit pas être équipé');
+
+  dom.window.close();
+});
+
+test('progression : réinitialiser la progression remet niveaux et trophées à zéro', { timeout: 60000 }, async () => {
+  const dom = await openGame(function (w) { seedProgress(w, 'apple'); });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#goto-profil');
+  await waitFor(dom, () => doc.querySelectorAll('#roster-list .rcard').length > 0, 5000, 'écurie');
+  dom.window.confirm = () => true;
+
+  click(doc, '#btn-reset-progress');
+  await waitFor(dom, () => doc.querySelector('#level-badge').textContent === 'Nv 1', 5000, 'niveau réinitialisé');
+
+  assert.strictEqual(doc.querySelector('#rank-name').textContent, 'Bronze', 'rang non réinitialisé');
+  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '0 / 12', 'trophées non réinitialisés');
+  const saved = JSON.parse(dom.window.localStorage.getItem(META_KEY));
+  assert.strictEqual(saved.playerXp, 0, 'PX non réinitialisés');
+  assert.strictEqual(saved.brands.apple.xp, 0, 'PX de la marque non réinitialisés');
+
+  dom.window.close();
+});
+
+test('interface : un combat ouvre l’écran de récompenses puis crédite l’XP', { timeout: 180000 }, async () => {
+  const dom = await openGame();
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#btn-speed');
+  click(doc, '#btn-speed');                       // ×3 : les tests vont plus vite
+  click(doc, '[data-mode="auto"]');
+  await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 10000, 'arène');
+
+  // Niveau et rareté affichés sur les cartes de l'arène
+  ['left', 'right'].forEach(function (side) {
+    assert.match(doc.querySelector('#lvl-' + side).textContent, /Nv 1/, 'niveau absent sur la carte ' + side);
+    assert.match(doc.querySelector('#lvl-' + side).textContent, /(Commun|Rare|Épique|Légendaire|Mythique)/,
+      'rareté absente sur la carte ' + side);
+  });
+
+  await waitFor(dom, () => doc.querySelector('#result-overlay').classList.contains('is-open'), 120000, 'fin du combat');
+  await waitFor(dom, () => doc.querySelector('#rewards-overlay').classList.contains('is-open'), 20000, 'écran de récompenses');
+
+  // XP gagnée, détail des gains et barres animées
+  assert.ok(parseInt(doc.querySelector('#rewards-xp').textContent, 10) > 0, 'aucune XP attribuée');
+  assert.ok(doc.querySelectorAll('#rewards-parts li').length >= 2, 'détail des gains absent');
+  assert.strictEqual(doc.querySelectorAll('#rewards-bars .xprow').length, 3,
+    'l’écran doit afficher la barre du joueur et celle des deux marques');
+  assert.match(doc.querySelector('#rewards-rank').textContent, /Bronze|Argent|Or/, 'rang absent de l’écran de récompenses');
+
+  // Sauvegarde
+  const saved = JSON.parse(dom.window.localStorage.getItem(META_KEY));
+  assert.ok(saved.playerXp > 0, 'PX du joueur non sauvegardés');
+  assert.strictEqual(typeof saved.battles, 'number', 'compteur de combats absent');
+  const fought = Object.keys(saved.brands).filter((id) => saved.brands[id].xp > 0);
+  assert.strictEqual(fought.length, 2, 'les deux marques du combat doivent gagner de l’XP');
+
+  // Fermeture de l'écran
+  click(doc, '#btn-rewards-continue');
+  await waitFor(dom, () => !doc.querySelector('#rewards-overlay').classList.contains('is-open'), 5000, 'fermeture des récompenses');
+
+  // Le profil reflète le combat joué
+  click(doc, '[data-goto="menu"]');
+  click(doc, '#goto-profil');
+  await waitFor(dom, () => doc.querySelector('#screen-profil').classList.contains('is-active'), 5000, 'profil');
+  const lvl = parseInt(doc.querySelector('#level-badge').textContent.replace('Nv ', ''), 10);
+  assert.ok(lvl >= 2, 'le premier combat doit faire monter le joueur au moins au niveau 2 (lu : ' + lvl + ')');
+  assert.match(doc.querySelector('#profil-stats').textContent, /Combats/, 'statistiques du profil vides');
 
   dom.window.close();
 });

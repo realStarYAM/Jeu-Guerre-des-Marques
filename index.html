@@ -25,6 +25,7 @@
   </button>
   <nav class="topbar__nav">
     <button class="chip-btn" data-goto="rules" title="Règles du combat">📖 Règles</button>
+    <button class="chip-btn" id="goto-profil" data-goto="profil" title="Progression, niveaux et trophées">👤 Profil</button>
     <button class="chip-btn" data-goto="stats" title="Statistiques">🏆 Palmarès</button>
     <button class="chip-btn" id="btn-sound" title="Activer / couper le son">🔊 Son</button>
   </nav>
@@ -44,6 +45,19 @@
         <button class="btn btn--ghost btn--xl" data-mode="auto">🎬 Combat auto</button>
       </div>
       <div class="hero__roster" id="menu-roster"></div>
+
+      <button class="profil-strip" id="menu-progress" data-goto="profil" title="Niveaux, skins, badges et trophées">
+        <span class="profil-strip__rank" id="menu-rank-icon">🥉</span>
+        <span class="profil-strip__body">
+          <span class="profil-strip__top">
+            <b id="menu-rank-name">Bronze</b>
+            <span class="lvl" id="menu-level">Nv <b>1</b></span>
+          </span>
+          <span class="bar bar--xp"><span class="bar__fill xprow__fill" id="menu-xp-fill"></span></span>
+          <span class="profil-strip__hint" id="menu-progress-hint">Aucun combat disputé — lancez un duel !</span>
+        </span>
+        <span class="profil-strip__go">👤 Profil →</span>
+      </button>
     </div>
   </section>
 
@@ -128,6 +142,7 @@
               <p class="fighter__cat" id="cat-left"></p>
             </div>
           </header>
+          <div class="fighter__lvl" id="lvl-left"></div>
 
           <div class="hp">
             <div class="hp__top">
@@ -180,6 +195,7 @@
             </div>
             <span class="badge" id="badge-right"></span>
           </header>
+          <div class="fighter__lvl fighter__lvl--right" id="lvl-right"></div>
 
           <div class="hp">
             <div class="hp__top">
@@ -267,6 +283,51 @@
     </div>
   </section>
 
+
+  <!-- ============ PROFIL ============ -->
+  <section class="screen" id="screen-profil">
+    <div class="panel panel--wide">
+      <h2 class="panel__title">👤 Profil</h2>
+
+      <div class="profil__hero">
+        <div class="rank" id="rank-card">
+          <span class="rank__icon" id="rank-icon">🥉</span>
+          <div class="rank__body">
+            <span class="rank__label">Rang du joueur</span>
+            <b class="rank__name" id="rank-name">Bronze</b>
+            <div class="bar bar--rank"><div class="bar__fill" id="rank-fill"></div></div>
+            <span class="rank__next" id="rank-next">—</span>
+          </div>
+        </div>
+
+        <div class="level">
+          <span class="level__badge" id="level-badge">Nv 1</span>
+          <div class="level__body">
+            <div class="hp__top">
+              <span class="hp__label">Niveau global</span>
+              <span class="hp__numbers" id="level-xp-txt">0 / 30 PX</span>
+            </div>
+            <div class="bar bar--xp"><div class="bar__fill" id="level-xp-fill"></div></div>
+            <span class="level__hint" id="level-hint">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-grid" id="profil-stats"></div>
+
+      <h3 class="panel__subtitle">🏆 Trophées <span class="count-pill" id="trophy-count">0 / 0</span></h3>
+      <div class="trophy-grid" id="trophy-grid"></div>
+
+      <h3 class="panel__subtitle">🎖️ Écurie — niveaux, skins et maîtrise</h3>
+      <div class="roster" id="roster-list"></div>
+
+      <div class="panel__actions">
+        <button class="btn btn--ghost" id="btn-reset-progress">🔄 Réinitialiser la progression</button>
+        <button class="btn btn--primary" data-goto="menu">← Retour au menu</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ PALMARÈS ============ -->
   <section class="screen" id="screen-stats">
     <div class="panel panel--wide">
@@ -320,8 +381,25 @@
   </div>
 </div>
 
+
+<!-- Écran de récompenses (après chaque combat) -->
+<div class="overlay overlay--rewards" id="rewards-overlay" aria-hidden="true">
+  <div class="rewards">
+    <span class="rewards__kicker">Récompenses de combat</span>
+    <h2 class="rewards__title">+<span id="rewards-xp">0</span> PX</h2>
+    <ul class="rewards__parts" id="rewards-parts"></ul>
+    <div class="rewards__bars" id="rewards-bars"></div>
+    <div class="rewards__unlocks" id="rewards-unlocks"></div>
+    <div class="rewards__rank" id="rewards-rank"></div>
+    <div class="rewards__actions">
+      <button class="btn btn--primary" id="btn-rewards-continue">Continuer</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/brands.js"></script>
 <script src="js/engine.js"></script>
+<script src="js/progression.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/ui.js"></script>
 </body>
