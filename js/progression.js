@@ -6,10 +6,11 @@
    ============================================================ */
 (function (root, factory) {
   const data = (typeof module !== 'undefined' && module.exports) ? require('./brands.js') : root.BRANDS_DATA;
-  const api = factory(data);
+  const bossData = (typeof module !== 'undefined' && module.exports) ? require('./bosses.js') : root.BOSSES_DATA;
+  const api = factory(data, bossData);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Progress = api;
-})(typeof self !== 'undefined' ? self : this, function (DATA) {
+})(typeof self !== 'undefined' ? self : this, function (DATA, BOSS) {
   'use strict';
 
   /* ---------------------- Courbe d'expérience ----------------------
@@ -85,18 +86,34 @@
     { id: 'myth',   name: 'Mythique',     level: 100, css: 'skin--myth',   desc: 'Aura légendaire' }
   ];
 
+  /* Skins exclusifs au Boss Rush : débloqués en battant un boss, portables
+     par n'importe quelle marque (contrairement aux skins de niveau). */
+  const BOSS_SKINS = (BOSS && BOSS.BOSS_SKINS) || [];
+
   function skinById(id) {
-    return SKINS.find(function (s) { return s.id === id; }) || SKINS[0];
+    return SKINS.find(function (s) { return s.id === id; }) ||
+      BOSS_SKINS.find(function (s) { return s.id === id; }) || SKINS[0];
   }
   function unlockedSkins(level) {
     const l = level || 1;
     return SKINS.filter(function (s) { return s.level <= l; });
   }
+  function unlockedBossSkins(meta) {
+    const owned = ((meta && meta.boss) || {}).skins || [];
+    return BOSS_SKINS.filter(function (s) { return owned.indexOf(s.id) !== -1; });
+  }
+  function isBossSkin(id) {
+    return BOSS_SKINS.some(function (s) { return s.id === id; });
+  }
   function nextSkin(level) {
     const l = level || 1;
     return SKINS.find(function (s) { return s.level > l; }) || null;
   }
-  function isSkinUnlocked(skinId, level) {
+  function isSkinUnlocked(skinId, level, meta) {
+    if (isBossSkin(skinId)) {
+      const owned = ((meta && meta.boss) || {}).skins || [];
+      return owned.indexOf(skinId) !== -1;
+    }
     const s = skinById(skinId);
     return (level || 1) >= s.level;
   }
@@ -192,11 +209,23 @@
       test: function (m) { return levelFromXp(m.playerXp || 0).level >= LEVEL_MAX; } }
   ];
 
+  /* Les trophées du Boss Rush rejoignent la grille du profil : ils lisent la
+     sauvegarde Boss Rush (`meta.boss`) au lieu des statistiques globales. */
+  const ALL_TROPHIES = TROPHIES.concat(((BOSS && BOSS.BOSS_TROPHIES) || []).map(function (t) {
+    return {
+      id: t.id, icon: t.icon, name: t.name, desc: t.desc, bossExclusive: true,
+      test: function (m) { return t.test((m && m.boss) || {}); }
+    };
+  }));
+
   function trophiesOf(meta) {
-    return TROPHIES.map(function (t) {
+    return ALL_TROPHIES.map(function (t) {
       let earned = false;
       try { earned = !!t.test(meta || {}); } catch (e) { earned = false; }
-      return { id: t.id, icon: t.icon, name: t.name, desc: t.desc, earned: earned };
+      return {
+        id: t.id, icon: t.icon, name: t.name, desc: t.desc,
+        earned: earned, bossExclusive: !!t.bossExclusive
+      };
     });
   }
 
@@ -219,7 +248,7 @@
       uses: raw.uses || 0,
       ultimates: raw.ultimates || 0,
       bestDamage: raw.bestDamage || 0,
-      skin: raw.skin && isSkinUnlocked(raw.skin, prog.level) ? raw.skin : 'base'
+      skin: raw.skin && isSkinUnlocked(raw.skin, prog.level, m) ? raw.skin : 'base'
     };
     state.badges = badgesOf(state);
     state.badgesEarned = state.badges.filter(function (b) { return b.earned; }).length;
@@ -251,7 +280,9 @@
   /* ---------------------- Application d'un résultat ----------------------
      Met à jour `meta` (sauvegarde) et renvoie le rapport de récompenses. */
   function applyBattleResult(meta, payload) {
-    const ids = [payload.playerBrand, payload.foeBrand].filter(Boolean);
+    const ids = [payload.playerBrand, payload.foeBrand].filter(function (id) {
+      return !!id && !!DATA.getBrand(id);      // un boss n'a pas de fiche de marque
+    });
     const xpReport = battleXp(payload);
     const xp = xpReport.total;
 
@@ -374,6 +405,101 @@
     };
   }
 
+  /* ---------------------- Boss Rush ----------------------
+     Récompenses d'un boss vaincu : XP, badge, skin exclusif, titre de profil
+     et trophées. Tout est cumulé dans `meta.boss` (sauvegardé). */
+  function bossSave(meta) {
+    if (!BOSS) return null;
+    meta.boss = BOSS.hydrateBossSave(meta.boss);
+    return meta.boss;
+  }
+
+  function grantBossRewards(meta, payload) {
+    const save = bossSave(meta);
+    const out = {
+      xp: 0, xpParts: [], skin: null, title: null, badge: null,
+      trophies: [], firstClear: false, boss: null
+    };
+    if (!save || !BOSS) return out;
+
+    const boss = BOSS.getBoss(payload.bossId);
+    if (!boss) return out;
+    const diff = BOSS.getDifficulty(payload.difficulty);
+    out.boss = boss;
+
+    save.totalDamage = (save.totalDamage || 0) + (payload.damage || 0);
+    save.lastBrand = payload.brand || save.lastBrand;
+    save.lastDifficulty = diff.id;
+
+    if (!payload.won) return out;
+
+    out.firstClear = !save.cleared[boss.id];
+    save.cleared[boss.id] = true;
+    if (boss.secret) save.secretSeen = true;
+
+    const xp = Math.round((boss.reward.xp || 100) * (diff.xp || 1) * (out.firstClear ? 1 : 0.25));
+    out.xp = xp;
+    out.xpParts.push({
+      label: (out.firstClear ? 'Boss vaincu · ' : 'Boss revaincu · ') + boss.name,
+      value: xp
+    });
+    if (out.firstClear && diff.id !== 'normal') {
+      const bonus = Math.round(xp * 0.5);
+      out.xp += bonus;
+      out.xpParts.push({ label: 'Prime ' + diff.name, value: bonus });
+    }
+
+    out.badge = { id: 'boss-' + boss.id, icon: boss.reward.badge, name: boss.name, desc: 'Boss vaincu' };
+    if (save.badges.indexOf(out.badge.id) === -1) save.badges.push(out.badge.id);
+
+    if (out.firstClear) {
+      const skin = BOSS.BOSS_SKINS.find(function (s) { return s.boss === boss.id; });
+      if (skin && save.skins.indexOf(skin.id) === -1) { save.skins.push(skin.id); out.skin = skin; }
+      const title = BOSS.BOSS_TITLES.find(function (t) { return t.boss === boss.id; });
+      if (title && save.titles.indexOf(title.id) === -1) { save.titles.push(title.id); out.title = title; }
+    }
+
+    // Trophées exclusifs : recalculés à chaque victoire
+    BOSS.BOSS_TROPHIES.forEach(function (t) {
+      if (t.test(save) && save.trophies.indexOf(t.id) === -1) {
+        save.trophies.push(t.id);
+        out.trophies.push(t);
+      }
+    });
+    return out;
+  }
+
+  /* Fin d'un Boss Rush (victoire ou défaite) : temps, dégâts et statistiques */
+  function finishBossRush(meta, payload) {
+    const save = bossSave(meta);
+    if (!save) return null;
+    const diff = BOSS ? BOSS.getDifficulty(payload.difficulty) : null;
+    const record = {
+      time: payload.timeMs || 0,
+      damage: payload.damage || 0,
+      brand: payload.brand || null,
+      difficulty: diff ? diff.id : 'normal',
+      bosses: payload.bosses || 0,
+      won: !!payload.won
+    };
+    save.runs = (save.runs || 0) + 1;
+    if (payload.won) {
+      save.wins = (save.wins || 0) + 1;
+      save.byDifficulty[record.difficulty] = (save.byDifficulty[record.difficulty] || 0) + 1;
+      if (!save.bestTime || record.time < save.bestTime) {
+        save.bestTime = record.time;
+        save.bestBrand = record.brand;
+        save.bestDifficulty = record.difficulty;
+      }
+      const prev = save.bestTimeByDiff[record.difficulty];
+      if (!prev || record.time < prev) save.bestTimeByDiff[record.difficulty] = record.time;
+    } else {
+      save.losses = (save.losses || 0) + 1;
+    }
+    if (record.damage > (save.bestDamage || 0)) save.bestDamage = record.damage;
+    return record;
+  }
+
   /* ---------------------- Sauvegarde vide ---------------------- */
   function emptyProgress() {
     const brands = {};
@@ -383,7 +509,8 @@
     return {
       battles: 0, wins: 0, losses: 0, crits: 0, specials: 0, ultimates: 0,
       bestDamage: 0, streak: 0, bestStreak: 0, duels: [], playerXp: 0,
-      bestKo: null, tournamentWin: false, brands: brands
+      bestKo: null, tournamentWin: false, brands: brands,
+      boss: BOSS ? BOSS.emptyBossSave() : null
     };
   }
 
@@ -397,6 +524,7 @@
     DATA.BRANDS.forEach(function (b) {
       if (!meta.brands[b.id]) meta.brands[b.id] = { xp: 0, wins: 0, losses: 0, uses: 0, ultimates: 0, bestDamage: 0, skin: 'base' };
     });
+    if (BOSS && BOSS.hydrateBossSave) meta.boss = BOSS.hydrateBossSave(meta.boss);
     return meta;
   }
 
@@ -426,6 +554,12 @@
     battleXp: battleXp,
     applyBattleResult: applyBattleResult,
     emptyProgress: emptyProgress,
-    hydrate: hydrate
+    hydrate: hydrate,
+    BOSS_SKINS: BOSS_SKINS,
+    isBossSkin: isBossSkin,
+    unlockedBossSkins: unlockedBossSkins,
+    bossSave: bossSave,
+    grantBossRewards: grantBossRewards,
+    finishBossRush: finishBossRush
   };
 });

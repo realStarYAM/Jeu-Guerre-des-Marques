@@ -94,22 +94,37 @@
     return 1 + (CFG.LEVEL_STAT_GROWTH * (l - 1)) / (CFG.LEVEL_MAX - 1);
   }
 
+  /* Multiplicateur appliqué à une statistique :
+     `opts.scale` reste global, `opts.statMult` permet d'ajuster chaque axe
+     (utilisé par le Boss Rush pour gonfler les PV sans dérégler l'attaque). */
+  function statScale(opts, key) {
+    const base = (opts.scale || 1) * levelGrowth(opts.level);
+    const m = opts.statMult || {};
+    return base * (m[key] !== undefined ? m[key] : 1);
+  }
+
   function createFighter(brandOrId, side, opts) {
     const brand = typeof brandOrId === 'string' ? getBrand(brandOrId) : brandOrId;
     if (!brand) throw new Error('Marque inconnue : ' + brandOrId);
     opts = opts || {};
-    const growth = levelGrowth(opts.level);
-    const scale = (opts.scale || 1) * growth;
     return {
       side: side,                                   // 'left' | 'right'
       brand: brand,
       name: brand.name,
-      maxHp: Math.round(brand.stats.pv * scale),
-      hp: Math.round(brand.stats.pv * scale),
+      maxHp: Math.round(brand.stats.pv * statScale(opts, 'pv')),
+      hp: Math.round(brand.stats.pv * statScale(opts, 'pv')),
       base: {
-        attaque: Math.round(brand.stats.attaque * scale),
-        defense: Math.round(brand.stats.defense * scale),
-        vitesse: Math.round(brand.stats.vitesse * scale)
+        attaque: Math.round(brand.stats.attaque * statScale(opts, 'attaque')),
+        defense: Math.round(brand.stats.defense * statScale(opts, 'defense')),
+        vitesse: Math.round(brand.stats.vitesse * statScale(opts, 'vitesse'))
+      },
+      boss: !!brand.boss,       // boss du Boss Rush
+      phase: 0,                 // phase courante (0 = phase d'origine)
+      baseBrand: brand,         // fiche d'origine, avant transformation de phase
+      passiveStacks: 0,
+      statMult: {               // multiplicateurs appliqués (niveau + difficulté)
+        pv: statScale(opts, 'pv'), attaque: statScale(opts, 'attaque'),
+        defense: statScale(opts, 'defense'), vitesse: statScale(opts, 'vitesse')
       },
       energy: 0,
       level: Math.max(1, Math.min(CFG.LEVEL_MAX, Math.round(opts.level || 1))),
@@ -242,6 +257,7 @@
   /* --- Résolution d'une frappe (1 à N impacts) --- */
   function strike(battle, attacker, defender, params) {
     params = params || {};
+    const events0 = [];      // événements annexes (renvoi de dégâts…)
     const hits = [];
     let total = 0;
     const count = params.hits || 1;
@@ -287,6 +303,21 @@
       const lethal = defender.hp <= 0;
       hits.push({ damage: dmg, crit: isCrit, dodged: false, blocked: blocked, lethal: lethal });
 
+      // Renvoi de dégâts (boss « miroir ») : le défenseur répercute une part
+      if (!blocked && defender.mirror && dmg > 0 && attacker.hp > 0) {
+        const back = Math.max(1, Math.round(dmg * defender.mirror));
+        attacker.hp = Math.max(0, attacker.hp - back);
+        hits[hits.length - 1].mirror = back;
+        events0.push({ t: 'mirror', side: defender.side, target: attacker.side, amount: back });
+        log(battle, '🪞 ' + defender.name + ' renvoie ' + back + ' dégâts à ' + attacker.name + '.', 'crit');
+        if (attacker.hp <= 0) {
+          battle.active = false;
+          battle.winner = defender;
+          battle.endReason = 'ko';
+          log(battle, '☠️ ' + attacker.name + ' s’effondre sous son propre coup !', 'ko');
+        }
+      }
+
       if (params.healRatio) {
         const healed = applyHeal(battle, attacker, Math.round(dmg * params.healRatio));
         if (healed > 0) hits[hits.length - 1].heal = healed;
@@ -317,6 +348,8 @@
       allDodged: hits.length > 0 && hits.every(function (h) { return h.dodged; }),
       allBlocked: hits.length > 0 && hits.every(function (h) { return h.blocked; })
     };
+
+    event.side_events = events0;
 
     // Historique des attaques
     const critAny = hits.some(function (h) { return h.crit; });
@@ -373,6 +406,163 @@
     const healed = Math.min(amount, f.maxHp - f.hp);
     f.hp += healed;
     return healed;
+  }
+
+  /* --- Boss : passifs de début de tour --- */
+
+  /* Renvoie une action forcée ('overload') ou null.
+     Types gérés :
+       rampage → l'attaque monte à chaque tour
+       evade   → vitesse accrue (donc plus d'esquives)
+       siphon  → régénération passive
+       mirror  → prépare le renvoi d'une part des dégâts subis
+       overload→ frappe surchargée tous les `every` tours */
+  function applyPassive(battle, f, events) {
+    const p = f.brand.passive;
+    if (!p) return null;
+    const foe = opponentOf(battle, f);
+
+    if (p.type === 'rampage') {
+      const stacks = Math.min(p.maxStacks || 10, (f.passiveStacks || 0) + 1);
+      f.passiveStacks = stacks;
+      const mult = 1 + (p.perStack || 0.08) * stacks;
+      // libellé constant : le buff se remplace au lieu de s'empiler
+      addBuff(f, battle, {
+        stat: 'attaque', mult: mult, turns: 2,
+        label: p.name || 'Montée en puissance', icon: p.icon || '🔥'
+      }, events);
+      events.push({ t: 'bossPassive', side: f.side, kind: 'rampage', stacks: stacks, label: p.name || 'Montée en puissance', icon: p.icon || '🔥' });
+      log(battle, (p.icon || '🔥') + ' ' + f.name + ' gagne en puissance : ' + Math.round((mult - 1) * 100) + ' % d’attaque.', 'buff');
+      return null;
+    }
+
+    if (p.type === 'evade') {
+      const mult = p.spdMult || 1.5;
+      addBuff(f, battle, {
+        stat: 'vitesse', mult: mult, turns: 2,
+        label: '+' + Math.round((mult - 1) * 100) + ' % vitesse', icon: p.icon || '🌌'
+      }, events);
+      events.push({ t: 'bossPassive', side: f.side, kind: 'evade', label: p.name || 'Déphasage', icon: p.icon || '🌌' });
+      return null;
+    }
+
+    if (p.type === 'siphon') {
+      const healed = applyHeal(battle, f, Math.round(f.maxHp * (p.healRatio || 0.01)));
+      events.push({ t: 'bossPassive', side: f.side, kind: 'siphon', heal: healed, label: p.name || 'Régénération', icon: p.icon || '💚' });
+      if (healed > 0) log(battle, '💚 ' + f.name + ' se régénère de ' + healed + ' PV.', 'heal');
+      return null;
+    }
+
+    if (p.type === 'mirror') {
+      f.mirror = p.reflect || 0.15;      // lu par strike() via `defender.mirror`
+      events.push({ t: 'bossPassive', side: f.side, kind: 'mirror', label: p.name || 'Renvoi', icon: p.icon || '🪞', reflect: f.mirror });
+      return null;
+    }
+
+    if (p.type === 'overload') {
+      f.passiveStacks = (f.passiveStacks || 0) + 1;
+      if (f.passiveStacks % (p.every || 3) === 0) return 'overload';
+      return null;
+    }
+    return null;
+  }
+
+  /* --- Boss : transformations de phase --- */
+
+  /* Construit la fiche du boss pour une phase donnée.
+     `copy: true` → le boss vole le pouvoir spécial et l'ultime de l'adversaire. */
+  function phaseBrand(boss, phase, foeBrand) {
+    const next = {
+      id: boss.id,
+      name: phase.name || boss.name,
+      mono: phase.mono || boss.mono,
+      cat: boss.cat,
+      boss: true,
+      order: boss.order,
+      secret: boss.secret,
+      icon: boss.icon,
+      tagline: boss.tagline,
+      colors: phase.colors || boss.colors,
+      accent: phase.accent || boss.accent,
+      glow: phase.glow || boss.glow,
+      fx: boss.fx,
+      music: boss.music,
+      intro: boss.intro,
+      reward: boss.reward,
+      special: Object.assign({}, boss.special, phase.special || {}),
+      ultimate: Object.assign({}, boss.ultimate, phase.ultimate || {}),
+      passive: phase.passive || boss.passive,
+      phases: boss.phases,
+      power: boss.power,
+      powerDesc: boss.powerDesc
+    };
+    const src = phase.copy && foeBrand ? foeBrand : boss;
+    const m = phase.stats || {};
+    next.stats = {
+      pv: boss.stats.pv,
+      attaque: Math.round(src.stats.attaque * (m.attaque || 1)),
+      defense: Math.round(src.stats.defense * (m.defense || 1)),
+      vitesse: Math.round(src.stats.vitesse * (m.vitesse || 1))
+    };
+    if (phase.copy && foeBrand) {
+      next.special = Object.assign({}, foeBrand.special);
+      next.ultimate = Object.assign({}, foeBrand.ultimate);
+      next.copiedFrom = foeBrand.name;
+    }
+    return next;
+  }
+
+  function checkPhases(battle, events) {
+    ['left', 'right'].forEach(function (side) {
+      const f = battle.fighters[side];
+      const phases = (f.baseBrand && f.baseBrand.phases) || f.brand.phases;
+      if (!phases || !phases.length) return;
+      if (f.hp <= 0) return;
+      const ratio = f.hp / f.maxHp;
+      let idx = f.phase;
+      while (idx < phases.length && ratio <= phases[idx].at) idx++;
+      if (idx <= f.phase) return;
+
+      const phase = phases[idx - 1];
+      const foe = opponentOf(battle, f);
+      const hpRatio = f.hp / f.maxHp;
+
+      f.brand = phaseBrand(f.baseBrand, phase, foe.brand);
+      f.name = f.brand.name;
+      f.phase = idx;
+      f.passiveStacks = 0;
+      f.buffs = [];                 // les buffs de la phase précédente disparaissent
+      f.critGuaranteed = 0;
+      f.shield = 0;
+      f.stun = 0;
+      f.energy = f.brand.special ? Math.min(f.energy, f.brand.special.cost - 1) : 0;
+      f.ult = Math.min(CFG.ULT_MAX, f.ult + 40);   // la nouvelle phase arrive chargée
+      f.maxHp = Math.round(f.brand.stats.pv * f.statMult.pv);
+      f.hp = Math.max(1, Math.min(f.maxHp, Math.round(f.maxHp * hpRatio)));
+      f.base = {
+        attaque: Math.round(f.brand.stats.attaque * f.statMult.attaque),
+        defense: Math.round(f.brand.stats.defense * f.statMult.defense),
+        vitesse: Math.round(f.brand.stats.vitesse * f.statMult.vitesse)
+      };
+
+      events.push({
+        t: 'bossPhase',
+        side: f.side,
+        phase: idx,
+        label: phase.label || ('PHASE ' + (idx + 1) + ' !'),
+        name: f.brand.name,
+        mono: f.brand.mono,
+        colors: f.brand.colors,
+        accent: f.brand.accent,
+        glow: f.brand.glow,
+        copied: !!phase.copy,
+        copiedFrom: f.brand.copiedFrom || null,
+        special: f.brand.special,
+        ultimate: f.brand.ultimate
+      });
+      log(battle, '☠️ ' + (phase.label || 'PHASE ' + (idx + 1)) + ' ' + f.brand.name + ' change de forme !', 'boss');
+    });
+    return events;
   }
 
   /* --- Actions --- */
@@ -740,12 +930,27 @@
       return events;
     }
 
-    if (action === 'defend') {
+    // Passif de boss : peut forcer une action (« overload ») ou poser un effet
+    const forced = applyPassive(battle, actor, events);
+    const choice = forced || action;
+
+    if (choice === 'defend') {
       doDefend(battle, actor, events);
-    } else if (action === 'special' && canUseSpecial(actor)) {
+    } else if (choice === 'special' && canUseSpecial(actor)) {
       doSpecial(battle, actor, foe, events);
-    } else if (action === 'ultimate' && canUseUltimate(actor)) {
+    } else if (choice === 'ultimate' && canUseUltimate(actor)) {
       doUltimate(battle, actor, foe, events);
+    } else if (choice === 'overload') {
+      const p = actor.brand.passive || {};
+      const ev = strike(battle, actor, foe, {
+        mult: p.mult || 1.6,
+        hits: p.hits || 1,
+        pierce: p.pierce || 0,
+        special: { name: p.name || 'Surcharge', icon: p.icon || '⚡', type: 'overload', desc: '' }
+      });
+      events.push(ev);
+      events.push({ t: 'bossOverload', side: actor.side, name: p.name || 'Surcharge', icon: p.icon || '⚡' });
+      log(battle, (p.icon || '⚡') + ' ' + actor.name + ' libère « ' + (p.name || 'Surcharge') + ' » !', 'special');
     } else {
       events.push(strike(battle, actor, foe, {}));
     }
@@ -757,6 +962,7 @@
       }
       events.push({ t: 'end', winner: battle.winner ? battle.winner.side : null, rounds: battle.round, reason: battle.endReason });
     } else {
+      checkPhases(battle, events);
       endTurn(battle, events);
     }
     return events;
@@ -812,6 +1018,8 @@
     canUseSpecial: canUseSpecial,
     canUseUltimate: canUseUltimate,
     gainUlt: gainUlt,
+    checkPhases: checkPhases,
+    applyPassive: applyPassive,
     act: act,
     aiChoose: aiChoose,
     autoPlay: autoPlay,

@@ -5,11 +5,12 @@
   "description": "Jeu de combat HTML/CSS/JavaScript : Apple, Samsung, Xiaomi, Huawei, Google, Microsoft, Sony, Nintendo, AMD, NVIDIA et Intel s'affrontent dans une arène.",
   "scripts": {
     "start": "python3 -m http.server 8000 --bind 0.0.0.0",
-    "test": "node --test test/engine.test.js test/progression.test.js test/ui.test.js",
+    "test": "node --test test/engine.test.js test/progression.test.js test/boss.test.js test/ui.test.js",
     "test:engine": "node --test test/engine.test.js",
     "test:ui": "node --test test/ui.test.js",
     "balance": "node tools/balance.js 24",
-    "test:progression": "node --test test/progression.test.js"
+    "test:progression": "node --test test/progression.test.js",
+    "test:boss": "node --test test/boss.test.js"
   },
   "devDependencies": {
     "jsdom": "^30.0.1"

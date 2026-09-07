@@ -25,6 +25,7 @@
   </button>
   <nav class="topbar__nav">
     <button class="chip-btn" data-goto="rules" title="Règles du combat">📖 Règles</button>
+    <button class="chip-btn" id="goto-bossrush" data-goto="bossrush" title="Boss Rush : affrontez les boss de l’arène">👑 Boss</button>
     <button class="chip-btn" id="goto-profil" data-goto="profil" title="Progression, niveaux et trophées">👤 Profil</button>
     <button class="chip-btn" data-goto="stats" title="Statistiques">🏆 Palmarès</button>
     <button class="chip-btn" id="btn-sound" title="Activer / couper le son">🔊 Son</button>
@@ -43,6 +44,7 @@
         <button class="btn btn--primary btn--xl" data-mode="duel">⚔️ Duel</button>
         <button class="btn btn--ghost btn--xl" data-mode="tournament">🏆 Tournoi</button>
         <button class="btn btn--ghost btn--xl" data-mode="auto">🎬 Combat auto</button>
+        <button class="btn btn--boss btn--xl" id="btn-boss" title="Boss Rush : une série de boss surpuissants">👑 Boss Rush</button>
       </div>
       <div class="hero__roster" id="menu-roster"></div>
 
@@ -130,6 +132,24 @@
           <button class="chip-btn chip-btn--sm" id="btn-speed" title="Vitesse des animations">⏩ ×1</button>
           <button class="chip-btn chip-btn--sm" id="btn-auto" title="Laisser l’IA jouer">🤖 Auto : off</button>
         </div>
+      </div>
+
+      <!-- Barre de PV du boss (mode Boss Rush) -->
+      <div class="bossbar" id="bossbar" hidden>
+        <div class="bossbar__head">
+          <span class="bossbar__icon" id="bossbar-icon">🤖</span>
+          <span class="bossbar__id">
+            <b class="bossbar__name" id="bossbar-name">—</b>
+            <span class="bossbar__phase" id="bossbar-phase">Phase 1 / 1</span>
+          </span>
+          <span class="bossbar__pv"><b id="bossbar-now">0</b> / <span id="bossbar-max">0</span> PV</span>
+        </div>
+        <div class="bossbar__bar">
+          <div class="bossbar__ghost" id="bossbar-ghost"></div>
+          <div class="bossbar__fill" id="bossbar-fill"></div>
+          <div class="bossbar__marks" id="bossbar-marks"></div>
+        </div>
+        <p class="bossbar__power" id="bossbar-power">—</p>
       </div>
 
       <!-- Combattants -->
@@ -284,6 +304,36 @@
   </section>
 
 
+  <!-- ============ BOSS RUSH ============ -->
+  <section class="screen" id="screen-bossrush">
+    <div class="panel panel--wide">
+      <h2 class="panel__title">👑 Boss Rush</h2>
+      <p class="panel__sub" id="bossrush-sub">
+        Choisissez une marque, enchaînez les boss et survivez jusqu’au bout.
+        Votre marque entre en <strong>surrégime</strong> : ses statistiques sont
+        multipliées pour tenir tête à ces monstres de silicium.
+      </p>
+
+      <h3 class="panel__subtitle">Difficulté</h3>
+      <div class="diff-picker" id="diff-picker"></div>
+
+      <h3 class="panel__subtitle">Votre Boss Rush</h3>
+      <div class="stat-grid" id="bossrush-stats"></div>
+
+      <h3 class="panel__subtitle">Les boss <span class="count-pill" id="bossrush-count">0 / 5</span></h3>
+      <div class="boss-grid" id="boss-grid"></div>
+
+      <h3 class="panel__subtitle">🏆 Trophées exclusifs <span class="count-pill" id="boss-trophy-count">0 / 0</span></h3>
+      <div class="trophy-grid" id="boss-trophy-grid"></div>
+
+      <div class="panel__actions">
+        <button class="btn btn--boss btn--xl" id="btn-start-boss">👑 Lancer le Boss Rush</button>
+        <button class="btn btn--ghost" id="btn-reset-boss">🔄 Réinitialiser le Boss Rush</button>
+        <button class="btn btn--ghost" data-goto="menu">← Retour au menu</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ PROFIL ============ -->
   <section class="screen" id="screen-profil">
     <div class="panel panel--wide">
@@ -317,6 +367,9 @@
 
       <h3 class="panel__subtitle">🏆 Trophées <span class="count-pill" id="trophy-count">0 / 0</span></h3>
       <div class="trophy-grid" id="trophy-grid"></div>
+
+      <h3 class="panel__subtitle">👑 Titres de boss <span class="count-pill" id="title-count">0 / 0</span></h3>
+      <div class="title-grid" id="title-list"></div>
 
       <h3 class="panel__subtitle">🎖️ Écurie — niveaux, skins et maîtrise</h3>
       <div class="roster" id="roster-list"></div>
@@ -370,6 +423,30 @@
   <span class="ko__text">K.O.</span>
 </div>
 
+<!-- Cinématique d'introduction d'un boss -->
+<div class="bossintro" id="boss-intro" aria-hidden="true">
+  <div class="bossintro__bg" id="bossintro-bg"></div>
+  <div class="bossintro__grid"></div>
+  <div class="bossintro__rays"></div>
+  <div class="bossintro__stack">
+    <span class="bossintro__kicker" id="bossintro-kicker">BOSS</span>
+    <span class="bossintro__icon" id="bossintro-icon">🤖</span>
+    <h2 class="bossintro__name" id="bossintro-name">MEGA TECH</h2>
+    <p class="bossintro__phrase" id="bossintro-phrase"></p>
+    <div class="bossintro__stats" id="bossintro-stats"></div>
+    <span class="bossintro__power" id="bossintro-power"></span>
+    <span class="bossintro__go" id="bossintro-go">FIGHT !</span>
+  </div>
+</div>
+
+<!-- K.O. de boss -->
+<div class="bossko" id="boss-ko" aria-hidden="true">
+  <div class="bossko__flash"></div>
+  <span class="bossko__text">BOSS<br>K.O.</span>
+  <span class="bossko__name" id="bossko-name"></span>
+  <div class="bossko__shards" id="bossko-shards"></div>
+</div>
+
 <!-- Overlay résultat -->
 <div class="overlay" id="result-overlay" aria-hidden="true">
   <div class="result">
@@ -398,6 +475,7 @@
 </div>
 
 <script src="js/brands.js"></script>
+<script src="js/bosses.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/progression.js"></script>
 <script src="js/audio.js"></script>

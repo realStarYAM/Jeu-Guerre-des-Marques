@@ -132,7 +132,11 @@ test('trophées : aucun au départ, puis débloqués selon les statistiques glob
 
   const rich = Object.assign(freshMeta(), {
     wins: 100, battles: 200, bestStreak: 12, ultimates: 80,
-    crits: 200, bestDamage: 300, tournamentWin: true, playerXp: 999999
+    crits: 200, bestDamage: 300, tournamentWin: true, playerXp: 999999,
+    boss: {
+      cleared: { megatech: true, overclock: true, quantum: true, corrupted: true, finalbrand: true, nullsector: true },
+      wins: 9, bestTime: 60000, bestDamage: 99999, byDifficulty: { impossible: 2 }
+    }
   });
   B.BRANDS.forEach((b) => { rich.brands[b.id].xp = 999999; });   // skins débloqués
   const full = P.trophiesOf(rich);

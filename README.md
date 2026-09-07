@@ -78,6 +78,41 @@ elle ne recommence à monter qu'une fois la recharge terminée.
 - **Duel** : choisissez votre marque puis votre adversaire.
 - **Tournoi** : une marque contre les 10 autres, de la plus abordable à la plus redoutable, avec parcours affiché.
 - **Combat auto** : deux marques aléatoires jouées par l'IA, pour regarder le spectacle.
+- **👑 Boss Rush** : votre marque entre en *surrégime* et enchaîne les boss (voir ci-dessous).
+
+### 👑 Boss Rush
+
+Cinq boss, puis un **boss secret** qui n'apparaît qu'après avoir vaincu les cinq autres.
+
+| Boss | PV | Pouvoir |
+| --- | --- | --- |
+| 🤖 MEGA TECH | 1 200 | Surcharge technologique — décharge périodique qui perce la défense |
+| 🔥 OVERCLOCK | 1 500 | Montée en température — son attaque grimpe à chaque tour |
+| 🌌 QUANTUM CORE | 1 800 | Déphasage quantique — esquive une partie des attaques |
+| ☠️ CORRUPTED AI | 2 200 | Copie des capacités — en phase 2, elle vole votre pouvoir et votre ultime |
+| 👑 THE FINAL BRAND | 3 000 | Trois phases royales : 50 % puis 25 % de PV |
+| 🕳️ NULL SECTOR | 4 200 | Boss secret — absorption du vide et copie intégrale |
+
+Chaque boss possède une **barre de PV dédiée** (avec repères de phase), **plusieurs phases de
+combat**, des **attaques et un ultime uniques**, un **passif** qui lui est propre, ses **effets
+visuels**, sa **musique de boss** générée en Web Audio, une **cinématique d'introduction** et une
+**animation de K.O.** Sous les 50 % de PV, le crie « **PHASE 2 !** » : il change de nom, de
+couleurs, de statistiques et d'attaques.
+
+Quatre difficultés — 🟢 Normal, 🟣 Difficile, 🔴 Extrême, ⚫ Impossible — majorent les
+statistiques du boss et les récompenses (×1 à ×4 d'XP).
+
+Récompenses à chaque boss tombé : **XP**, **badge**, **skin exclusif** (portable par toutes les
+marques), **titre de profil** et **trophées exclusifs**. L'écran Boss Rush récapitule boss
+vaincus, meilleur temps, dégâts infligés, marque utilisée, difficulté et récompenses obtenues.
+
+### 📈 Progression
+
+Chaque marque et le joueur gagnent de l'XP à chaque combat et montent du niveau 1 à 100
+(les statistiques grimpent de +20 % au total). Au programme : raretés, skins débloqués par
+niveau, badges de maîtrise, huit rangs du joueur (Bronze → Champion), douze trophées généraux
+et huit trophées de boss, écran de récompenses après chaque combat et page **Profil**.
+Tout est sauvegardé dans `localStorage` (`guerreDesMarques.meta.v1`).
 
 ### Commandes
 
@@ -99,14 +134,18 @@ ultime   : +14 en frappant, +9 en encaissant, +12 en gardant, +4 par round
 ## 📁 Structure
 
 ```
-index.html            Écrans (menu, règles, sélection, arène, palmarès) + cinématique d'ultime et overlays
-css/style.css         Design, barres (PV / énergie / ultime), cinématique par marque, particules, bannières, responsive
-js/brands.js          Données des 11 marques : stats, pouvoirs spéciaux et ultimes
-js/engine.js          Moteur de combat pur (sans DOM) : dégâts, critiques, esquives, buffs, ultimes, cooldown, IA
-js/audio.js           Effets sonores synthétisés en Web Audio (dont le thème d'ultime)
-js/ui.js              Rendu, cinématique d'ultime, particules par marque, historique détaillé, palmarès (localStorage)
+index.html            Écrans (menu, règles, sélection, arène, Boss Rush, profil, palmarès) + cinématiques et overlays
+css/style.css         Design, barres (PV / énergie / ultime), cinématique par marque, particules, boss, skins, responsive
+js/brands.js          Données des 11 marques : stats, raretés, pouvoirs spéciaux et ultimes
+js/bosses.js          Boss Rush : 6 boss (phases, passifs, musiques), 4 difficultés, récompenses
+js/engine.js          Moteur de combat pur (sans DOM) : dégâts, critiques, esquives, buffs, ultimes, cooldown, IA, phases de boss
+js/progression.js     XP, niveaux, raretés, skins, badges, rangs, trophées, récompenses de boss (localStorage)
+js/audio.js           Effets sonores synthétisés en Web Audio (+ musiques de boss et bruitages de phase)
+js/ui.js              Rendu, cinématiques d'ultime et de boss, historique détaillé, profil, palmarès (localStorage)
 test/engine.test.js   20 tests du moteur (formules, ultimes, cooldown, K.O., équilibrage)
-test/ui.test.js       7 tests d'intégration jsdom : duel complet, boutons joueur, réglages, ultime, cinématique courte, styles, tournoi
+test/progression.test.js  14 tests de la progression (XP, niveaux, skins, rangs, trophées)
+test/boss.test.js     14 tests du Boss Rush (phases, passifs, difficultés, récompenses, boss secret)
+test/ui.test.js       14 tests d'intégration jsdom : duel, tournoi, ultime, profil, récompenses, Boss Rush
 tools/balance.js      Rapport d'équilibrage (matrice des taux de victoire)
 ```
 
@@ -114,7 +153,8 @@ tools/balance.js      Rapport d'équilibrage (matrice des taux de victoire)
 
 ```bash
 npm install          # installe jsdom (tests d'interface uniquement)
-npm test             # moteur + interface (26 tests)
+npm test             # moteur + progression + boss + interface (62 tests)
+npm run test:boss    # Boss Rush uniquement
 npm run balance      # taux de victoire de chaque marque (miroir, 24 graines)
 ```
 

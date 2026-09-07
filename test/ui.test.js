@@ -74,9 +74,22 @@ test('chaque marque possède un style de cinématique et des particules dédiés
     assert.ok(new RegExp(k + ':\\s*\\{\\s*particle:').test(ui), 'particules manquantes pour : ' + k);
   });
 
-  const particles = Array.from(ui.matchAll(/particle: '([a-z]+)'/g)).map((m) => m[1]);
-  assert.strictEqual(new Set(particles).size, 11, 'chaque marque doit avoir ses propres particules');
-  particles.forEach((p) => assert.ok(css.includes('.up--' + p), 'classe CSS manquante : .up--' + p));
+  const fxBlock = ui.slice(ui.indexOf('const ULT_FX'), ui.indexOf('/* Particules projetées'));
+  const brandParticles = Array.from(fxBlock.slice(0, fxBlock.indexOf('/* Boss :')).matchAll(/particle: '([a-z]+)'/g)).map((m) => m[1]);
+  assert.strictEqual(brandParticles.length, 11, 'onze marques → onze types de particules');
+  assert.strictEqual(new Set(brandParticles).size, 11, 'chaque marque doit avoir ses propres particules');
+
+  // Chaque boss possède sa propre signature visuelle
+  const bossBlock = ui.slice(fxBlock.indexOf('/* Boss :'));
+  const bossData = fs.readFileSync(path.join(ROOT, 'js/bosses.js'), 'utf8');
+  Array.from(bossData.matchAll(/fx: '([a-z]+)'/g)).map((m) => m[1]).forEach((k) => {
+    assert.ok(new RegExp(k + ':\\s*\\{\\s*particle:').test(bossBlock), 'particules de boss manquantes : ' + k);
+    assert.ok(css.includes('.cine[data-fx="' + k + '"]'), 'style d’ultime de boss manquant : ' + k);
+  });
+
+  Array.from(fxBlock.matchAll(/particle: '([a-z]+)'/g)).map((m) => m[1]).forEach((p) => {
+    assert.ok(css.includes('.up--' + p), 'classe CSS manquante : .up--' + p);
+  });
 
   // Bannières de résultat
   ['critical', 'block', 'dodge'].forEach((v) => {
@@ -501,7 +514,7 @@ test('progression : la page Profil affiche rang, niveau, trophées et écurie', 
 
   // Statistiques du joueur
   const stats = Array.from(doc.querySelectorAll('#profil-stats .stat-card')).map((c) => c.textContent);
-  assert.strictEqual(stats.length, 8, 'cartes de statistiques du profil manquantes');
+  assert.strictEqual(stats.length, 9, 'cartes de statistiques du profil manquantes');
   assert.ok(stats.some((t) => /Combats/.test(t) && /40/.test(t)), 'nombre de combats absent');
   assert.ok(stats.some((t) => /Taux de victoire/.test(t) && /63 %/.test(t)), 'taux de victoire absent');
   assert.ok(stats.some((t) => /Marque favorite/.test(t) && /Apple/.test(t)), 'marque favorite absente');
@@ -509,10 +522,10 @@ test('progression : la page Profil affiche rang, niveau, trophées et écurie', 
   assert.ok(stats.some((t) => /Ultimes lancés/.test(t) && /20/.test(t)), 'ultimes lancés absents');
   assert.ok(stats.some((t) => /Série en cours/.test(t) && /record 7/.test(t)), 'série de victoires absente');
 
-  // Trophées : 6 débloqués sur 12 avec cette sauvegarde
-  assert.strictEqual(doc.querySelectorAll('#trophy-grid .trophy').length, 12, 'grille de trophées incomplète');
+  // Trophées : 6 débloqués sur 20 (12 généraux + 8 du Boss Rush) avec cette sauvegarde
+  assert.strictEqual(doc.querySelectorAll('#trophy-grid .trophy').length, 20, 'grille de trophées incomplète');
   assert.strictEqual(doc.querySelectorAll('#trophy-grid .trophy.is-earned').length, 6, 'trophées débloqués incorrects');
-  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '6 / 12', 'compteur de trophées incorrect');
+  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '6 / 20', 'compteur de trophées incorrect');
 
   // Écurie : 11 marques, raretés, skins et badges de maîtrise
   assert.strictEqual(doc.querySelectorAll('#roster-list .rcard').length, 11, 'écurie incomplète');
@@ -580,7 +593,7 @@ test('progression : réinitialiser la progression remet niveaux et trophées à 
   await waitFor(dom, () => doc.querySelector('#level-badge').textContent === 'Nv 1', 5000, 'niveau réinitialisé');
 
   assert.strictEqual(doc.querySelector('#rank-name').textContent, 'Bronze', 'rang non réinitialisé');
-  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '0 / 12', 'trophées non réinitialisés');
+  assert.strictEqual(doc.querySelector('#trophy-count').textContent, '0 / 20', 'trophées non réinitialisés');
   const saved = JSON.parse(dom.window.localStorage.getItem(META_KEY));
   assert.strictEqual(saved.playerXp, 0, 'PX non réinitialisés');
   assert.strictEqual(saved.brands.apple.xp, 0, 'PX de la marque non réinitialisés');
@@ -633,6 +646,163 @@ test('interface : un combat ouvre l’écran de récompenses puis crédite l’X
   const lvl = parseInt(doc.querySelector('#level-badge').textContent.replace('Nv ', ''), 10);
   assert.ok(lvl >= 2, 'le premier combat doit faire monter le joueur au moins au niveau 2 (lu : ' + lvl + ')');
   assert.match(doc.querySelector('#profil-stats').textContent, /Combats/, 'statistiques du profil vides');
+
+  dom.window.close();
+});
+
+/* ============================================================
+   BOSS RUSH — écran, lancement, combat de boss et récompenses
+   ============================================================ */
+
+/* Sauvegarde prête à l'emploi pour les tests du Boss Rush */
+function bossSeed(over) {
+  return Object.assign({
+    battles: 40, wins: 25, losses: 15, crits: 40, specials: 10, ultimates: 30,
+    bestDamage: 260, streak: 3, bestStreak: 7, duels: [], playerXp: 999999,
+    bestKo: { damage: 260, brand: 'apple', foe: 'intel', at: Date.now() },
+    tournamentWin: true, brands: {}
+  }, over || {});
+}
+
+test('boss rush : l’écran affiche les difficultés, les boss et les trophées', { timeout: 60000 }, async () => {
+  const dom = await openGame(function (w) { w.localStorage.setItem(META_KEY, JSON.stringify(bossSeed())); });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#btn-boss');
+  await waitFor(dom, () => doc.querySelector('#screen-bossrush').classList.contains('is-active'), 5000, 'écran Boss Rush');
+
+  // Bouton bien présent à côté des autres modes
+  assert.ok(doc.querySelector('.hero__actions #btn-boss'), 'bouton Boss absent du menu');
+  assert.strictEqual(doc.querySelectorAll('.hero__actions .btn').length, 4, 'quatre modes attendus au menu');
+
+  // Quatre difficultés
+  assert.strictEqual(doc.querySelectorAll('#diff-picker .diff').length, 4, 'quatre difficultés attendues');
+  assert.ok(doc.querySelector('.diff.is-on'), 'une difficulté doit être sélectionnée');
+
+  // Cinq boss + le boss secret verrouillé
+  assert.strictEqual(doc.querySelectorAll('#boss-grid .bcard-boss').length, 6, 'six cartes de boss attendues');
+  assert.strictEqual(doc.querySelectorAll('#boss-grid .bcard-boss.is-locked').length, 1, 'le boss secret doit être verrouillé');
+  assert.match(doc.querySelector('#bossrush-count').textContent, /0 \/ 5/, 'compteur de boss incorrect');
+  assert.match(doc.querySelector('#boss-grid').textContent, /MEGA TECH/, 'MEGA TECH absent');
+  assert.match(doc.querySelector('#boss-grid').textContent, /THE FINAL BRAND/, 'le boss final est absent');
+
+  // Changer de difficulté
+  doc.querySelector('.diff[data-diff="impossible"]').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  await waitFor(dom, () => doc.querySelector('.diff.is-on').dataset.diff === 'impossible', 3000, 'difficulté sélectionnée');
+  assert.match(doc.querySelector('.diff.is-on').textContent, /Impossible/);
+
+  // Trophées exclusifs
+  assert.strictEqual(doc.querySelectorAll('#boss-trophy-grid .trophy').length, 8, 'huit trophées exclusifs attendus');
+  assert.strictEqual(doc.querySelector('#boss-trophy-count').textContent, '0 / 8', 'compteur de trophées incorrect');
+
+  // Statistiques : boss vaincus, meilleur temps, dégâts, marque, difficulté
+  const stats = doc.querySelector('#bossrush-stats').textContent;
+  ['Boss vaincus', 'Meilleur temps', 'Dégâts infligés', 'Marque du record', 'Boss Rush lancés', 'Boss Rush terminés']
+    .forEach((label) => assert.match(stats, new RegExp(label), 'statistique absente : ' + label));
+
+  dom.window.close();
+});
+
+test('boss rush : le boss secret se déverrouille après les cinq autres', { timeout: 60000 }, async () => {
+  const dom = await openGame(function (w) {
+    w.localStorage.setItem(META_KEY, JSON.stringify(bossSeed({
+      boss: {
+        cleared: { megatech: true, overclock: true, quantum: true, corrupted: true, finalbrand: true },
+        skins: ['circuit'], titles: ['title-megatech'], trophies: ['bossFirst'],
+        wins: 1, runs: 2, bestTime: 210000, bestDamage: 12000, bestBrand: 'apple', bestDifficulty: 'difficile'
+      }
+    })));
+  });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#goto-bossrush');
+  await waitFor(dom, () => doc.querySelectorAll('#boss-grid .bcard-boss').length > 0, 5000, 'cartes de boss');
+
+  assert.strictEqual(doc.querySelectorAll('#boss-grid .bcard-boss.is-locked').length, 0, 'le secret doit être révélé');
+  assert.match(doc.querySelector('#bossrush-count').textContent, /5 \/ 5/, 'compteur de boss incorrect');
+  assert.match(doc.querySelector('#boss-grid').textContent, /NULL SECTOR/, 'NULL SECTOR doit être visible');
+  assert.match(doc.querySelector('#bossrush-stats').textContent, /3 min 30 s/, 'meilleur temps absent');
+  assert.match(doc.querySelector('#bossrush-stats').textContent, /12000/, 'dégâts record absents');
+  assert.match(doc.querySelector('#bossrush-stats').textContent, /Apple/, 'marque du record absente');
+
+  // Lancer le run : six boss au programme
+  click(doc, '#btn-start-boss');
+  await waitFor(dom, () => doc.querySelector('#screen-select').classList.contains('is-active'), 5000, 'sélection');
+  assert.match(doc.querySelector('#select-title').textContent, /Boss Rush/, 'titre de sélection incorrect');
+  doc.querySelector('#brand-grid .bcard').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 8000, 'arène');
+  assert.match(doc.querySelector('#hud-mode').textContent, /boss 1\/6/, 'le run doit comporter six boss');
+
+  dom.window.close();
+});
+
+test('interface : un combat de boss affiche l’intro, la barre de PV et les phases', { timeout: 240000 }, async () => {
+  const dom = await openGame(function (w) { w.localStorage.setItem(META_KEY, JSON.stringify(bossSeed())); });
+  const doc = dom.window.document;
+  await waitFor(dom, () => doc.querySelectorAll('.roster-chip').length > 0, 10000, 'chargement');
+
+  click(doc, '#btn-speed');
+  click(doc, '#btn-speed');                       // ×3
+  click(doc, '#btn-boss');
+  await waitFor(dom, () => doc.querySelector('#screen-bossrush').classList.contains('is-active'), 5000, 'écran Boss Rush');
+  click(doc, '#btn-start-boss');
+  await waitFor(dom, () => doc.querySelector('#screen-select').classList.contains('is-active'), 5000, 'sélection');
+  doc.querySelector('#brand-grid .bcard').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+
+  // Cinématique d'introduction
+  await waitFor(dom, () => doc.querySelector('#boss-intro').classList.contains('is-open'), 8000, 'cinématique d’intro');
+  assert.match(doc.querySelector('#bossintro-name').textContent, /MEGA TECH/, 'nom du boss absent de l’intro');
+  assert.match(doc.querySelector('#bossintro-stats').textContent, /1200/, 'PV du boss absents de l’intro');
+  assert.match(doc.querySelector('#bossintro-power').textContent, /Surcharge technologique/, 'pouvoir absent de l’intro');
+  await waitFor(dom, () => !doc.querySelector('#boss-intro').classList.contains('is-open'), 15000, 'fin de l’intro');
+
+  await waitFor(dom, () => doc.querySelector('#screen-arena').classList.contains('is-active'), 5000, 'arène');
+  assert.match(doc.querySelector('#hud-mode').textContent, /Boss Rush/, 'mode absent du bandeau');
+
+  // Barre de PV spéciale avec repères de phase
+  assert.strictEqual(doc.querySelector('#bossbar').hidden, false, 'barre de boss masquée');
+  assert.match(doc.querySelector('#bossbar-name').textContent, /MEGA TECH/);
+  assert.strictEqual(parseInt(doc.querySelector('#bossbar-max').textContent, 10) >= 1200, true, 'PV du boss incorrects');
+  assert.strictEqual(doc.querySelectorAll('#bossbar-marks .bossbar__mark').length, 1, 'repère de phase manquant');
+  assert.match(doc.querySelector('#bossbar-phase').textContent, /Phase 1/, 'numéro de phase absent');
+  assert.match(doc.querySelector('#bossbar-power').textContent, /Surcharge technologique/, 'pouvoir absent de la barre');
+
+  // Le boss est identifié comme tel, le joueur est en surrégime
+  assert.ok(doc.querySelector('#fighter-right').classList.contains('is-boss'), 'carte de boss non marquée');
+  assert.match(doc.querySelector('#lvl-right').textContent, /BOSS/, 'étiquette BOSS absente');
+  assert.match(doc.querySelector('#lvl-left').textContent, /Surrégime/, 'surrégime du joueur absent');
+
+  // Laisser l'IA jouer le combat
+  click(doc, '#btn-auto');
+  await waitFor(dom, () => doc.querySelector('#result-overlay').classList.contains('is-open'), 180000, 'fin du combat de boss');
+
+  // Le boss a dû passer en phase 2 au cours du combat
+  assert.ok(doc.querySelectorAll('#bossbar-marks .bossbar__mark').length >= 1, 'repères de phase perdus');
+
+  // Panneau de résultat et actions propres au Boss Rush
+  const title = doc.querySelector('#result-title').textContent;
+  assert.ok(/BOSS VAINCU|BOSS RUSH TERMINÉ/.test(title), 'titre de résultat inattendu : ' + title);
+  const actions = Array.from(doc.querySelectorAll('#result-actions .btn')).map((b) => b.textContent);
+  assert.ok(actions.some((a) => /Quitter le Boss Rush/.test(a)), 'action « Quitter » absente');
+  assert.ok(actions.some((a) => /Boss suivant|Réessayer|Voir le tableau/.test(a)), 'action de suite absente');
+
+  // Sauvegarde : les dégâts du combat sont comptés et la partie est enregistrée
+  const saved = JSON.parse(dom.window.localStorage.getItem(META_KEY));
+  assert.ok(saved.boss, 'bloc Boss Rush absent de la sauvegarde');
+  assert.ok(saved.boss.totalDamage > 0, 'dégâts non comptés');
+  const playerName = doc.querySelector('#name-left').textContent;
+  assert.ok(saved.boss.lastBrand, 'marque du run non enregistrée');
+  assert.match(playerName, new RegExp('^' + saved.boss.lastBrand + '$', 'i'),
+    'la marque enregistrée ne correspond pas au combattant : ' + saved.boss.lastBrand + ' / ' + playerName);
+
+  // Quitter le Boss Rush referme la partie
+  const quit = Array.from(doc.querySelectorAll('#result-actions .btn')).find((b) => /Quitter/.test(b.textContent));
+  quit.dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  await waitFor(dom, () => doc.querySelector('#screen-bossrush').classList.contains('is-active'), 8000, 'retour Boss Rush');
+  const after = JSON.parse(dom.window.localStorage.getItem(META_KEY));
+  assert.strictEqual(after.boss.runs, 1, 'le Boss Rush doit être comptabilisé');
 
   dom.window.close();
 });
